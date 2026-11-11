@@ -1,0 +1,906 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ZD Licensing</title>
+<meta name="theme-color" content="#18222e">
+<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.28.1/lib/msal-browser.min.js"></script>
+<link rel="stylesheet" href="shared/zd.css?v=20261112">
+</head>
+<body>
+<header id="hdr" hidden>
+  <div class="logo" id="logo">ZD Licensing</div>
+  <nav id="nav"></nav>
+  <div class="who" id="who"></div>
+</header>
+<main id="main"><div class="empty">Loading…</div></main>
+
+<!-- Camera (sign-in face check, licence photo, find by face) -->
+<div id="camOv" class="overlay" hidden>
+  <div class="t" id="camT"></div>
+  <div class="s" id="camS"></div>
+  <div class="row"><select id="camSel" aria-label="Camera"></select></div>
+  <div class="cam" id="camBox"><video id="camVid" playsinline autoplay muted></video><div id="camGuide"></div></div>
+  <div class="msg" id="camMsg"></div>
+  <div class="row">
+    <button class="btn primary" id="camTake">Take photo</button>
+    <label class="btn" id="camFileLbl" style="margin:0">Load photo from file<input type="file" id="camFile" accept="image/*" hidden></label>
+    <button class="btn" id="camCancel">Cancel</button>
+  </div>
+</div>
+
+<!-- Photo crop (3 x 4 passport shape) -->
+<div id="cropOv" class="overlay" hidden>
+  <div class="t">Position the photo</div>
+  <div class="s">Drag to move, use the slider to zoom. Head and shoulders, face in the middle.</div>
+  <div class="crop" id="cropBox"><canvas id="cropCv"></canvas></div>
+  <div class="row"><span class="small">Zoom</span><input type="range" id="cropZoom" min="1" max="4" step="0.01" value="1"></div>
+  <div class="row">
+    <button class="btn" id="cropRot">Rotate ↻</button>
+    <button class="btn primary" id="cropOk">Use this photo</button>
+    <button class="btn" id="cropRetake">Retake</button>
+    <button class="btn" id="cropCancel">Cancel</button>
+  </div>
+</div>
+
+<dialog id="dlg"><form method="dialog" id="dlgForm"><div class="dh" id="dlgT"></div><div class="db" id="dlgB"></div>
+  <div class="df"><button type="button" class="btn" id="dlgX">Cancel</button><button class="btn primary" id="dlgOk">Save</button></div></form></dialog>
+<div id="toast"></div>
+
+<script src="shared/zd-config.js?v=20261112"></script>
+<script src="shared/zd-card.js?v=20261112"></script>
+<script src="shared/zd-core.js?v=20261112"></script>
+<script>
+/* =====================================================================
+   ZD Licensing - firearms licence register and ID cards
+   Screens: Register · Licence (details, photo, card, firearms, history)
+            · Find by face · Backgrounds (Admin) · Staff (Admin) · Settings
+   Roles come from the Staff list (HubRole): Admin, Officer, Viewer.
+   The role only decides which screens open - SharePoint permissions on
+   the lists (the OFFICE_GROUP) still decide who can read or change data.
+   ===================================================================== */
+const ROLES = ["Admin", "Officer", "Viewer"];
+const S = { role: "", roleSource: "", route: "", param: "", filter: "all", q: "", dirty: false, card: null, offlinePass: false, missing: [], loadErr: null };
+let D = { licences: [], firearms: [], staff: [], backgrounds: [], at: "", offlineCopy: false };
+const canEdit = () => S.role === "Admin" || S.role === "Officer";
+const isAdmin = () => S.role === "Admin";
+const SAMPLE = { Title: "ZD-000123", GivenNames: "Sample", Surname: "Holder", LicenceType: "Shooter", DateOfBirth: "1985-06-14", Sex: "M", IssueDate: today(), ExpiryDate: addYears(today(), RULES.LICENCE_YEARS) };
+const arrFor = list => list === LISTS.licences ? D.licences : list === LISTS.firearms ? D.firearms : list === LISTS.staff ? D.staff : null;
+const lic = ref => D.licences.find(l => l.ClientRef === ref);
+const fullName = l => [l.GivenNames, String(l.Surname || "").toUpperCase()].filter(Boolean).join(" ");
+const norm = s => String(s || "").trim().toUpperCase();
+
+/* ---------------- start ---------------- */
+(async function start() {
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(e => console.warn("offline support unavailable", e));
+  try { await initAuth(); }
+  catch (e) { return fatal("Microsoft sign-in couldn't start: " + e.message); }
+  if (!DEMO && !account) return renderSignIn();
+  SYNC.onChange = renderWho;
+  await loadData();
+  if (S.loadErr && !D.at) return fatal(isForbidden(S.loadErr)
+    ? `You don't have access to the ${esc(BRAND.SHORT)} licensing site. Ask an administrator to add you to the <b>${esc(BRAND.OFFICE_GROUP)}</b> group.`
+    : "Couldn't load from SharePoint: " + esc(S.loadErr.message));
+  resolveRole();
+  if (S.role === "None") return fatal(`You're signed in as <b>${esc(me())}</b>, but you're not on the ${esc(BRAND.SHORT)} staff list. Ask an administrator to add you under <b>Staff</b>.`, true);
+  if (!(await faceGate())) return;
+  $("#hdr").hidden = false;
+  window.addEventListener("hashchange", route);
+  route();
+  flushSoon(800);
+})();
+
+function fatal(html, withSignOut) {
+  $("#main").innerHTML = `<div class="card signin"><h1>${esc(BRAND.COMPANY)} Licensing</h1><p>${html}</p>
+    ${withSignOut || !DEMO ? `<button class="btn" id="so">Sign out</button>` : ""}</div>`;
+  const b = $("#so"); if (b) b.onclick = signOut;
+}
+function renderSignIn() {
+  $("#main").innerHTML = `<div class="card signin"><h1>${esc(BRAND.COMPANY)} Licensing</h1>
+    <p class="muted">Firearms licence register and ID cards</p>
+    <p><button class="btn primary" id="si">Sign in with Microsoft</button></p>
+    <p class="small muted">After signing in you'll be asked for a quick face check.</p></div>`;
+  $("#si").onclick = signIn;
+}
+
+/* ---------------- data: SharePoint, or the copy saved on this device ---------------- */
+async function loadData() {
+  S.missing = []; S.loadErr = null;
+  const soft = (p, name) => p.catch(e => { if (!isNetErr(e) && isMissingList(e)) { S.missing.push(name); return []; } throw e; });
+  try {
+    if (!online()) throw Object.assign(new Error("offline"), { kind: "offline" });
+    if (!DEMO) await getSite();
+    const [licences, firearms, staff, backgrounds] = await Promise.all([
+      soft(listItems(LISTS.licences), LISTS.licences), soft(listItems(LISTS.firearms), LISTS.firearms),
+      soft(listItems(LISTS.staff), LISTS.staff), soft(libraryFiles(LISTS.backgrounds), LISTS.backgrounds)]);
+    D = { licences, firearms, staff, backgrounds, at: new Date().toISOString(), offlineCopy: false };
+    await saveSnapshot();
+    cacheBackgrounds();
+  } catch (e) {
+    if (!isNetErr(e)) S.loadErr = e;
+    const snap = await kvGet("snap").catch(() => null);
+    if (snap && (isNetErr(e) || !isForbidden(e))) D = { ...snap, offlineCopy: true };
+  }
+  await applyQueue();
+}
+const saveSnapshot = () => kvSet("snap", {
+  licences: D.licences.filter(l => !l._pending || !String(l.id).startsWith("local-")).map(clean),
+  firearms: D.firearms.filter(f => !String(f.id).startsWith("local-")).map(clean),
+  staff: D.staff.map(clean), backgrounds: D.backgrounds, at: D.at }).catch(() => {});
+const clean = r => Object.fromEntries(Object.entries(r).filter(([k]) => !k.startsWith("_")));
+
+/* Put changes still waiting in the queue on screen, marked "waiting to send". */
+function mergeLocal(list, ref, fields, extra = {}) {
+  const arr = arrFor(list); if (!arr) return null;
+  let row = arr.find(r => r.ClientRef === ref);
+  if (row) Object.assign(row, fields, extra, { _pending: true });
+  else { row = { id: "local-" + ref, ...fields, ClientRef: ref, ...extra, _pending: true }; arr.push(row); }
+  return row;
+}
+async function applyQueue(onlyRef) {
+  for (const op of await qMine()) {
+    if (onlyRef && op.ref !== onlyRef) continue;
+    if (op.kind === "upsert") mergeLocal(op.list, op.ref, op.fields, op.file ? { _localKey: op.file.localKey } : {});
+    if (op.kind === "face") mergeLocal(LISTS.licences, op.ref, { FaceStatus: "Waiting" });
+  }
+  await qCount();
+}
+SENT_HOOKS.push(async (op, saved) => {
+  const arr = arrFor(op.kind === "face" ? LISTS.licences : op.list); if (!arr) return;   // a face op returns the updated licence
+  const i = arr.findIndex(r => r.ClientRef === op.ref);
+  if (i >= 0) arr[i] = { ...saved }; else arr.push({ ...saved });
+  if (op.file?.localKey) await kvDel(op.file.localKey).catch(() => {});
+  await applyQueue(op.ref);                                          // anything still waiting for the same row
+  saveSnapshot();
+  if (!$("#dlg").open && $("#camOv").hidden && $("#cropOv").hidden) route(true);
+});
+/* Download every background once so cards can be printed offline. */
+async function cacheBackgrounds() {
+  for (const b of D.backgrounds) {
+    try { if (!(await kvGet("bg:" + b.fileId))) await kvSet("bg:" + b.fileId, await downloadFile(LISTS.backgrounds, b.fileId)); } catch (e) { if (isNetErr(e)) return; }
+  }
+}
+const IMGS = {};
+async function bgImage(b) {
+  if (!b) return null;
+  if (IMGS["bg:" + b.fileId]) return IMGS["bg:" + b.fileId];
+  let blob = await kvGet("bg:" + b.fileId);
+  if (!blob && online()) { try { blob = await downloadFile(LISTS.backgrounds, b.fileId); await kvSet("bg:" + b.fileId, blob); } catch {} }
+  return blob ? (IMGS["bg:" + b.fileId] = await blobImage(blob)) : null;
+}
+async function photoBlob(l) {
+  if (!l) return null;
+  if (l._localKey) { const b = await kvGet(l._localKey); if (b) return b; }
+  if (!l.PhotoItemId) return null;
+  let b = await kvGet("photo:" + l.PhotoItemId);
+  if (!b && online()) { try { b = await downloadFile(LISTS.photos, l.PhotoItemId); await kvSet("photo:" + l.PhotoItemId, b); } catch {} }
+  return b || null;
+}
+const URLS = {};
+async function photoUrl(l) {
+  const key = l._localKey || l.PhotoItemId; if (!key) return "";
+  if (URLS[key]) return URLS[key];
+  const b = await photoBlob(l); return b ? (URLS[key] = URL.createObjectURL(b)) : "";
+}
+
+/* ---------------- roles ---------------- */
+function resolveRole() {
+  if (DEMO) { const r = new URLSearchParams(location.search).get("role"); S.role = ROLES.includes(r) ? r : "Admin"; S.roleSource = "demo"; return; }
+  const mine = D.staff.find(s => String(s.Email || "").trim().toLowerCase() === me() && s.StaffStatus !== "Left");
+  if (mine && ROLES.includes(mine.HubRole)) { S.role = mine.HubRole; S.roleSource = "staff"; return; }
+  // First run: nobody is an Admin yet, so whoever signs in can set things up
+  if (!D.staff.some(s => s.HubRole === "Admin" && s.StaffStatus !== "Left")) { S.role = "Admin"; S.roleSource = "setup"; return; }
+  S.role = "None";
+}
+
+/* =====================================================================
+   FACE CHECK AT SIGN-IN (mandatory)
+   First time: the photo becomes the person's face record.
+   Every sign-in after that: the face must match the signed-in person.
+   With no internet: allowed only if this device passed a face check for
+   this person within OFFLINE_GRACE_HOURS (zd-config.js).
+   ===================================================================== */
+async function faceGate() {
+  const st = facePassState();
+  if (st === "ok") return true;
+  if (st === "offline") { S.offlinePass = true; return true; }
+  if (!DEMO && !FACE_API) { fatal("The face check service isn't set up yet, so nobody can sign in. An administrator needs to put its address in <code>ZD_FACE_API</code> (shared/zd-config.js).", true); return false; }
+  if (!online()) {
+    fatal(`No internet connection. The face check at sign-in needs internet, and this device hasn't passed one for you in the last ${RULES.OFFLINE_GRACE_HOURS} hours.<br><br><button class="btn primary" onclick="location.reload()">Try again</button>`, true);
+    return false;
+  }
+  let status;
+  try { status = await faceCall({ action: "status" }); }
+  catch (e) { fatal("The face check service couldn't be reached: " + esc(e.message) + `<br><br><button class="btn primary" onclick="location.reload()">Try again</button>`, true); return false; }
+  S.faceAdmin = !!status.admin;
+  let enrolled = !!status.enrolled;
+  $("#main").innerHTML = "";
+  const note = await openCamera({
+    title: enrolled ? "Face check" : "Set up your face check",
+    sub: enrolled ? "Look at the camera, face inside the oval." :
+      "First time only: this photo becomes your face record for signing in. Only a face-recognition record is kept, not the photo. Make sure only you are in the picture.",
+    take: enrolled ? "Check my face" : "Take photo & set up", selfie: true, guide: "oval", prefKey: "zd-cam-face", cancel: "Sign out",
+    onShot: async (blob, msg) => {
+      const image = await blobToB64(await shrink(blob, 900));
+      if (!enrolled) {
+        msg("Setting up your face…", true);
+        try { await faceCall({ action: "enrol", image }); }
+        catch (e) { if (e.code === "ALREADY_ENROLLED") { enrolled = true; msg("Your face is already set up - take the photo again to check it."); return false; } throw e; }
+        return "face set up";
+      }
+      msg("Checking…", true);
+      const r = await faceCall({ action: "verify", image });
+      if (r.verified) return `verified ${r.similarity}%`;
+      msg("That didn't match your face record. Try again in better light, or ask an administrator to reset your face record.");
+      return false;
+    }
+  });
+  if (!note) { signOut(); return false; }
+  setFacePass(note);
+  logActivity("Signed in", null, "Face check: " + note);
+  return true;
+}
+
+/* ---------------- camera ---------------- */
+let camStream = null;
+function stopCam() { if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; } }
+async function startCam(deviceId, selfie) {
+  stopCam();
+  const want = deviceId ? { deviceId: { exact: deviceId } } : { facingMode: selfie ? "user" : "environment" };
+  camStream = await navigator.mediaDevices.getUserMedia({ video: { ...want, width: { ideal: 1920 }, height: { ideal: 1440 } }, audio: false });
+  const v = $("#camVid"); v.srcObject = camStream; await v.play().catch(() => {});
+}
+async function fillCameraList(prefKey) {
+  const sel = $("#camSel");
+  const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
+  const cur = camStream?.getVideoTracks()[0]?.getSettings().deviceId || "";
+  sel.innerHTML = cams.map((c, i) => `<option value="${esc(c.deviceId)}" ${c.deviceId === cur ? "selected" : ""}>${esc(c.label || "Camera " + (i + 1))}</option>`).join("");
+  sel.hidden = cams.length < 2;
+}
+function grabFrame() {
+  const v = $("#camVid");
+  if (!v.videoWidth) throw new Error("The camera isn't ready yet - try again in a moment.");
+  const c = document.createElement("canvas"); c.width = v.videoWidth; c.height = v.videoHeight;
+  c.getContext("2d").drawImage(v, 0, 0);
+  return new Promise(r => c.toBlob(r, "image/jpeg", 0.92));
+}
+async function shrink(blob, max) {
+  const bmp = await createImageBitmap(blob);
+  const s = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas"); c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
+  c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+  return new Promise(r => c.toBlob(r, "image/jpeg", 0.88));
+}
+/* Opens the camera; onShot(blob, msg) returns a value to finish with, or false to stay open. */
+function openCamera({ title, sub, take = "Take photo", selfie = false, guide = "", allowFile = false, prefKey = "zd-cam", cancel = "Cancel", onShot }) {
+  return new Promise(resolve => {
+    const ov = $("#camOv"), msgEl = $("#camMsg"), takeBtn = $("#camTake"), sel = $("#camSel"), file = $("#camFile");
+    $("#camT").textContent = title; $("#camS").textContent = sub || "";
+    $("#camBox").className = "cam" + (selfie ? " selfie" : "");
+    $("#camGuide").innerHTML = guide === "oval" ? `<div class="oval"></div>` : guide === "frame" ? `<div class="frame34"></div>` : "";
+    takeBtn.textContent = take; $("#camCancel").textContent = cancel; $("#camFileLbl").hidden = !allowFile;
+    const msg = (t, ok) => { msgEl.textContent = t || ""; msgEl.classList.toggle("ok", !!ok); };
+    msg(""); ov.hidden = false;
+    const finish = v => { stopCam(); ov.hidden = true; takeBtn.onclick = sel.onchange = file.onchange = $("#camCancel").onclick = null; resolve(v); };
+    const handle = async blob => {
+      takeBtn.disabled = true;
+      try { const r = await onShot(blob, msg); if (r !== false && r !== undefined) finish(r); }
+      catch (e) { msg(isNetErr(e) ? "No internet connection - try again when you're back online." : e.message); }
+      finally { takeBtn.disabled = false; }
+    };
+    const start = async id => {
+      try { await startCam(id, selfie); await fillCameraList(prefKey); msg(""); }
+      catch (e) {
+        if (id) { localStorage.removeItem(prefKey); return start(""); }   // saved camera unplugged: use the default
+        msg("Camera unavailable: " + e.message + "." + (allowFile ? " You can load a photo from a file instead." : " Allow camera access for this site, then try again."));
+      }
+    };
+    sel.onchange = () => { localStorage.setItem(prefKey, sel.value); start(sel.value); };
+    takeBtn.onclick = async () => { try { await handle(await grabFrame()); } catch (e) { msg(e.message); } };
+    file.onchange = () => { const f = file.files[0]; file.value = ""; if (f) handle(f); };
+    $("#camCancel").onclick = () => finish(null);
+    start(localStorage.getItem(prefKey) || "");
+  });
+}
+
+/* ---------------- crop to a 3 x 4 passport-style photo ---------------- */
+function openCrop(blob) {
+  return new Promise(async resolve => {
+    let bmp;
+    try { bmp = await createImageBitmap(blob); } catch { toast("That file isn't a photo this browser can read"); return resolve(null); }
+    let src = document.createElement("canvas");
+    const draw0 = () => { src.width = bmp.width; src.height = bmp.height; src.getContext("2d").drawImage(bmp, 0, 0); };
+    draw0();
+    const ov = $("#cropOv"), cv = $("#cropCv"), zoomEl = $("#cropZoom"), VW = 300, VH = 400, dpr = window.devicePixelRatio || 1;
+    cv.width = VW * dpr; cv.height = VH * dpr; cv.style.width = VW + "px"; cv.style.height = VH + "px";
+    let z = 1, cx, cy;
+    const base = () => Math.max(VW / src.width, VH / src.height);
+    const clamp = () => {
+      const sc = base() * z, vw = VW / sc, vh = VH / sc;
+      cx = Math.min(Math.max(cx, vw / 2), src.width - vw / 2); cy = Math.min(Math.max(cy, vh / 2), src.height - vh / 2);
+      return { sc, vw, vh };
+    };
+    const reset = () => { z = 1; zoomEl.value = 1; cx = src.width / 2; cy = src.height / 2; paint(); };
+    const paint = () => {
+      const { vw, vh } = clamp(), g = cv.getContext("2d");
+      g.imageSmoothingQuality = "high";
+      g.drawImage(src, cx - vw / 2, cy - vh / 2, vw, vh, 0, 0, cv.width, cv.height);
+      g.strokeStyle = "rgba(255,255,255,.55)"; g.setLineDash([6 * dpr, 6 * dpr]); g.lineWidth = 2 * dpr;   // face guide
+      g.beginPath(); g.ellipse(cv.width / 2, cv.height * .42, cv.width * .3, cv.height * .27, 0, 0, Math.PI * 2); g.stroke();
+    };
+    let drag = null;
+    cv.onpointerdown = e => { drag = { x: e.clientX, y: e.clientY }; cv.setPointerCapture(e.pointerId); };
+    cv.onpointermove = e => { if (!drag) return; const sc = base() * z; cx -= (e.clientX - drag.x) / sc; cy -= (e.clientY - drag.y) / sc; drag = { x: e.clientX, y: e.clientY }; paint(); };
+    cv.onpointerup = () => drag = null;
+    cv.onwheel = e => { e.preventDefault(); z = Math.min(4, Math.max(1, z * (e.deltaY < 0 ? 1.08 : 1 / 1.08))); zoomEl.value = z; paint(); };
+    zoomEl.oninput = () => { z = +zoomEl.value; paint(); };
+    $("#cropRot").onclick = () => {
+      const r = document.createElement("canvas"); r.width = src.height; r.height = src.width;
+      const g = r.getContext("2d"); g.translate(r.width, 0); g.rotate(Math.PI / 2); g.drawImage(src, 0, 0); src = r; reset();
+    };
+    const done = v => { ov.hidden = true; resolve(v); };
+    $("#cropOk").onclick = () => {
+      const { vw, vh } = clamp(), out = document.createElement("canvas"); out.width = 900; out.height = 1200;
+      const g = out.getContext("2d"); g.imageSmoothingQuality = "high";
+      g.drawImage(src, cx - vw / 2, cy - vh / 2, vw, vh, 0, 0, 900, 1200);
+      out.toBlob(b => done(b), "image/jpeg", 0.9);
+    };
+    $("#cropRetake").onclick = () => done("retake");
+    $("#cropCancel").onclick = () => done(null);
+    ov.hidden = false; reset();
+  });
+}
+/* Camera or file -> crop -> 900 x 1200 JPEG (or null) */
+async function takeLicencePhoto() {
+  for (;;) {
+    const raw = await openCamera({ title: "Licence holder's photo", allowFile: true, guide: "frame", prefKey: "zd-cam-photo",
+      sub: "Choose the camera (a digital camera connected by USB shows up here), or load a photo saved from the camera's memory card.",
+      onShot: async blob => blob });
+    if (!raw) return null;
+    const out = await openCrop(raw);
+    if (out !== "retake") return out;
+  }
+}
+
+/* ---------------- activity log ---------------- */
+function logActivity(action, l, details = "") {
+  return enqueue({ kind: "upsert", list: LISTS.activity, ref: newRef(), label: action + (l ? " · " + l.Title : ""),
+    fields: { Title: action, LicenceRef: l?.ClientRef || "", LicenceNo: l?.Title || "", ActivityBy: me(), ActivityAt: `${today()} ${hhmm(new Date())}`, Details: details } });
+}
+
+/* ---------------- header, routing ---------------- */
+const NAV = [
+  ["", "Register", () => true], ["new", "New licence", canEdit], ["face", "Find by face", canEdit],
+  ["backgrounds", "Card backgrounds", isAdmin], ["staff", "Staff", isAdmin], ["settings", "Settings", () => true]];
+function renderNav() {
+  $("#logo").innerHTML = `${esc(BRAND.SHORT)} Licensing${DEMO ? "<small>demo</small>" : ""}`;
+  const cur = S.route === "licence" ? "" : S.route;
+  $("#nav").innerHTML = NAV.filter(n => n[2]()).map(([k, label]) => `<a href="#/${k}" class="${(k || "register") === (cur || "register") ? "on" : ""}">${label}</a>`).join("");
+  renderWho();
+}
+function renderWho() {
+  const el = $("#who"); if (!el || $("#hdr").hidden) return;
+  const on = online(), w = SYNC.waiting;
+  const txt = SYNC.error ? `Sync problem${w ? " · " + w : ""}` : on ? (w ? `Sending ${w}…` : "Online") : `Offline${w ? " · " + w + " waiting" : ""}`;
+  el.innerHTML = `<button class="sync ${SYNC.error ? "err" : on ? "" : "off"}" id="syncBtn" title="Changes waiting to go to SharePoint">${txt}</button>
+    <span>${esc(account?.name || me())}</span><span class="pill">${esc(S.role)}</span><button id="soBtn">Sign out</button>`;
+  $("#syncBtn").onclick = openSyncPanel; $("#soBtn").onclick = signOut;
+}
+window.addEventListener("online", () => { renderWho(); });
+window.addEventListener("offline", () => { renderWho(); });
+
+function route(quiet) {
+  const parts = location.hash.replace(/^#\/?/, "").split("/");
+  const next = parts[0] === "licence" ? "licence" : parts[0] || "";
+  const param = decodeURIComponent(parts[1] || "");
+  if (!quiet && S.dirty && (next !== S.route || param !== S.param) && !confirm("You have changes that aren't saved. Leave without saving?")) {
+    history.replaceState(null, "", S.route === "licence" ? "#/licence/" + S.param : "#/" + S.route); return;
+  }
+  // A quiet refresh of the same licence keeps whatever was typed but not saved yet
+  const keep = quiet && next === S.route && param === S.param && S.dirty && $("#licForm")
+    ? [...new FormData($("#licForm"))] : null;
+  if (!quiet || next !== S.route || param !== S.param) S.dirty = false;
+  S.route = next; S.param = param;
+  if (keep) setTimeout(() => {
+    const f = $("#licForm"); if (!f) return;
+    keep.forEach(([k, v]) => { if (f.elements[k]) f.elements[k].value = v; });
+    S.dirty = true; f.dispatchEvent(new Event("input"));
+  });
+  const allowed = { "": true, licence: true, new: canEdit(), face: canEdit(), backgrounds: isAdmin(), staff: isAdmin(), settings: true };
+  if (!allowed[next]) { location.hash = "#/"; return; }
+  renderNav();
+  ({ "": pageRegister, licence: pageLicence, new: pageLicence, face: pageFace, backgrounds: pageBackgrounds, staff: pageStaff, settings: pageSettings })[next]();
+}
+function banners() {
+  let h = "";
+  if (DEMO) h += `<div class="banner info"><b>Demo mode</b> - nothing goes to Microsoft or SharePoint; everything stays in this browser and the face check is simulated. Add <code>?role=Officer</code> or <code>?role=Viewer</code> to the address to try other roles. Settings has a "Pretend to be offline" switch.</div>`;
+  if (S.roleSource === "setup") h += `<div class="banner">First-run set-up: nobody is an Admin yet, so you have the Admin view. Open <a href="#/staff"><b>Staff</b></a>, add yourself as <b>Admin</b>, then add everyone else.</div>`;
+  if (S.missing.length) h += `<div class="banner err">Not set up on the SharePoint site yet: <b>${S.missing.map(esc).join(", ")}</b>. Run the set-up script (setup/Setup-ZD-Licensing.ps1).</div>`;
+  if (D.offlineCopy) h += `<div class="banner">Working offline - showing the copy saved on this device${D.at ? " at " + esc(localStamp(D.at)) : ""}. New work is kept on this device and sent when the connection is back.</div>`;
+  if (S.offlinePass) h += `<div class="banner">No internet at sign-in: you're using the face check this device took at ${esc(localStamp(new Date(facePass()?.at || 0).toISOString()))}. A new face check will be asked for when you're back online.</div>`;
+  return h;
+}
+
+/* =====================================================================
+   REGISTER
+   ===================================================================== */
+function statusOf(l) {
+  const t = today(), s = l.LicenceStatus || "Active";
+  if (s !== "Active") return s;
+  if (l.ExpiryDate && l.ExpiryDate.slice(0, 10) < t) return "Expired";
+  if (l.ExpiryDate && l.ExpiryDate.slice(0, 10) <= addDays(t, 60)) return "Expiring";
+  return "Active";
+}
+const STATUS_TAG = { Active: "ok", Expiring: "warn", Expired: "bad", Suspended: "bad", Cancelled: "bad" };
+const faceTag = l => ({ Enrolled: `<span class="tag ok">Face on file</span>`, Check: `<span class="tag bad" title="${esc(l.FaceNote)}">Face: check</span>`,
+  Failed: `<span class="tag warn" title="${esc(l.FaceNote)}">Face failed</span>`, Waiting: `<span class="tag info">Face waiting</span>` })[l.FaceStatus] || `<span class="tag">No face</span>`;
+const FILTERS = [["all", "All"], ["Active", "Active"], ["Expiring", "Expiring (60 days)"], ["Expired", "Expired"], ["stopped", "Suspended / cancelled"], ["face", "Face to check"], ["pending", "Waiting to send"]];
+function pageRegister() {
+  const q = S.q.trim().toLowerCase();
+  const pass = l => {
+    const st = statusOf(l);
+    if (S.filter === "stopped" ? !["Suspended", "Cancelled"].includes(st) : S.filter === "face" ? !["Check", "Failed"].includes(l.FaceStatus)
+      : S.filter === "pending" ? !l._pending : S.filter !== "all" && st !== S.filter) return false;
+    return !q || [l.Title, l.Surname, l.GivenNames, l.LicenceType, l.Phone].some(v => String(v || "").toLowerCase().includes(q));
+  };
+  const rows = D.licences.filter(pass).sort((a, b) => String(a.Surname || "").localeCompare(String(b.Surname || "")) || String(a.GivenNames || "").localeCompare(String(b.GivenNames || "")));
+  const count = k => D.licences.filter(l => { const o = S.filter; S.filter = k; const r = pass(l); S.filter = o; return r; }).length;
+  $("#main").innerHTML = banners() + `
+    <div class="bar"><h2>Licence register</h2><span class="muted">${D.licences.length} licence${D.licences.length === 1 ? "" : "s"}</span><span class="grow"></span>
+      <input type="search" id="q" placeholder="Search name, licence no, phone…" value="${esc(S.q)}" style="max-width:300px">
+      ${canEdit() ? `<a class="btn primary" href="#/new">+ New licence</a>` : ""}</div>
+    <div class="chips" style="margin-bottom:12px">${FILTERS.map(([k, t]) => `<button class="chip ${S.filter === k ? "on" : ""}" data-f="${k}">${t} <span class="muted">${count(k)}</span></button>`).join("")}</div>
+    <div class="card" style="padding:0;overflow:auto">${rows.length ? `<table><thead><tr><th></th><th>Licence no</th><th>Name</th><th>Type</th><th>Date of birth</th><th>Expires</th><th>Status</th><th>Face</th><th>Card printed</th></tr></thead><tbody>
+      ${rows.slice(0, 500).map(l => { const st = statusOf(l); return `<tr class="go" data-ref="${esc(l.ClientRef)}">
+        <td><img class="thumb" data-photo="${esc(l.ClientRef)}" alt=""></td><td class="mono">${esc(l.Title)}</td><td><b>${esc(fullName(l))}</b></td>
+        <td>${esc(l.LicenceType)}</td><td>${fmtDate(l.DateOfBirth)}</td><td>${fmtDate(l.ExpiryDate)}</td>
+        <td><span class="tag ${STATUS_TAG[st] || ""}">${st}</span>${l._pending ? ` <span class="tag info">waiting to send</span>` : ""}</td>
+        <td>${faceTag(l)}</td><td>${l.LastPrinted ? fmtDate(l.LastPrinted) + (num(l.PrintCount) > 1 ? ` <span class="muted">(${num(l.PrintCount)}×)</span>` : "") : `<span class="muted">—</span>`}</td></tr>`; }).join("")}
+      </tbody></table>${rows.length > 500 ? `<p class="muted small" style="padding:8px">Showing the first 500 - search to narrow down.</p>` : ""}`
+      : `<div class="empty">${D.licences.length ? "Nothing matches." : "No licences yet." + (canEdit() ? ` <a href="#/new">Add the first one</a>.` : "")}</div>`}</div>`;
+  $("#q").oninput = e => { S.q = e.target.value; const pos = e.target.selectionStart; pageRegister(); const n = $("#q"); n.focus(); n.setSelectionRange(pos, pos); };
+  $$("[data-f]").forEach(b => b.onclick = () => { S.filter = b.dataset.f; pageRegister(); });
+  $$("tr[data-ref]").forEach(tr => tr.onclick = () => location.hash = "#/licence/" + encodeURIComponent(tr.dataset.ref));
+  $$("img[data-photo]").forEach(async img => { const u = await photoUrl(lic(img.dataset.photo) || {}); if (u) img.src = u; });
+}
+const num = v => (v === "" || v == null || isNaN(+v)) ? 0 : +v;
+
+/* =====================================================================
+   LICENCE PAGE (new or existing): details, photo, card, firearms, history
+   ===================================================================== */
+let DRAFT_PHOTO = null;                 // photo taken for a licence that isn't saved yet
+let PREVIEW_T = null;
+async function pageLicence() {
+  const isNew = S.route === "new";
+  const ref = isNew ? (S.newRef ||= newRef()) : S.param;
+  if (!isNew) S.newRef = null;
+  const l = isNew ? { ClientRef: ref, LicenceStatus: "Active", IssueDate: today(), ExpiryDate: addYears(today(), RULES.LICENCE_YEARS), LicenceType: CHOICES.LICENCE_TYPES[0] || "" } : lic(ref);
+  if (!l) { $("#main").innerHTML = banners() + `<div class="card empty">That licence isn't in the register${D.offlineCopy ? " copy on this device" : ""}. <a href="#/">Back to the register</a></div>`; return; }
+  if (isNew && !S.dirty) DRAFT_PHOTO = null;
+  const ro = !canEdit();
+  const dis = ro ? "disabled" : "";
+  const opt = (arr, v) => [...new Set([...(arr || []), ...(v ? [v] : [])])].map(o => `<option ${o === v ? "selected" : ""}>${esc(o)}</option>`).join("");
+  const guns = D.firearms.filter(f => f.LicenceRef === ref && f.Removed !== "Yes");
+  // card design: saved choice, else the first active background
+  const actBg = D.backgrounds.filter(b => b.Active !== "No" && b.Active !== false);
+  if (!S.card || S.card.ref !== ref) {
+    const saved = D.backgrounds.find(b => b.name === l.CardBackground);
+    S.card = saved ? { ref, bg: saved.fileId, orientation: saved.Orientation || "Landscape" }
+      : l.ClientRef && !isNew && l.CardOrientation ? { ref, bg: "", orientation: l.CardOrientation }
+      : actBg[0] ? { ref, bg: actBg[0].fileId, orientation: actBg[0].Orientation || "Landscape" } : { ref, bg: "", orientation: "Landscape" };
+  }
+  $("#main").innerHTML = banners() + `
+    <div class="bar"><a href="#/" class="btn sm">← Register</a><h2>${isNew ? "New licence" : esc(l.Title) + " · " + esc(fullName(l))}</h2>
+      ${!isNew ? `<span class="tag ${STATUS_TAG[statusOf(l)] || ""}">${statusOf(l)}</span> ${faceTag(l)}` : ""}${l._pending ? ` <span class="tag info">waiting to send</span>` : ""}<span class="grow"></span>
+      ${ro ? "" : `<button class="btn primary" id="saveBtn">${isNew ? "Save licence" : "Save changes"}</button>`}</div>
+    <div class="cols">
+      <div>
+        <form class="card" id="licForm" autocomplete="off"><h3>Licence holder</h3>
+          <div class="grid2"><label>Surname *<input type="text" name="Surname" value="${esc(l.Surname)}" ${dis}></label>
+            <label>Given names *<input type="text" name="GivenNames" value="${esc(l.GivenNames)}" ${dis}></label></div>
+          <div class="grid3"><label>Date of birth *<input type="date" name="DateOfBirth" value="${esc(String(l.DateOfBirth || "").slice(0, 10))}" ${dis}></label>
+            <label>Sex<select name="Sex" ${dis}>${opt(["", "M", "F", "X"], l.Sex || "")}</select></label>
+            <label>Phone<input type="text" name="Phone" value="${esc(l.Phone)}" ${dis}></label></div>
+          <label>Address<textarea name="Address" ${dis}>${esc(l.Address)}</textarea></label>
+          <label>Email<input type="email" name="Email" value="${esc(l.Email)}" ${dis}></label>
+          <h3 style="margin-top:6px">Licence</h3>
+          <div class="grid3"><label>Licence no *<input type="text" name="Title" value="${esc(l.Title)}" class="mono" ${dis}></label>
+            <label>Licence type *<select name="LicenceType" ${dis}>${opt(CHOICES.LICENCE_TYPES, l.LicenceType)}</select></label>
+            <label>Status<select name="LicenceStatus" ${dis}>${opt(CHOICES.STATUSES, l.LicenceStatus || "Active")}</select></label></div>
+          <div class="grid2"><label>Issued *<input type="date" name="IssueDate" value="${esc(String(l.IssueDate || "").slice(0, 10))}" ${dis}></label>
+            <label>Expires *<input type="date" name="ExpiryDate" value="${esc(String(l.ExpiryDate || "").slice(0, 10))}" ${dis}></label></div>
+          <label>Notes (not printed)<textarea name="Notes" ${dis}>${esc(l.Notes)}</textarea></label>
+        </form>
+        <div class="card"><div class="bar" style="margin-bottom:8px"><h3 style="margin:0">Firearms on this licence</h3><span class="grow"></span>
+            ${!ro && !isNew ? `<button class="btn sm" id="addGun">+ Add firearm</button>` : ""}</div>
+          ${isNew ? `<p class="muted small">Save the licence first, then add firearms.</p>` : guns.length ? `<table><thead><tr><th>Serial no</th><th>Type</th><th>Make / model</th><th>Calibre</th><th></th></tr></thead><tbody>
+            ${guns.map(g => `<tr><td class="mono">${esc(g.Title)}</td><td>${esc(g.FirearmType)}</td><td>${esc([g.Make, g.Model].filter(Boolean).join(" "))}</td><td>${esc(g.Calibre)}</td>
+              <td style="text-align:right">${g._pending ? `<span class="tag info">waiting</span> ` : ""}${ro ? "" : `<button class="btn sm" data-gun="${esc(g.ClientRef)}">Edit</button>`}</td></tr>`).join("")}</tbody></table>`
+            : `<p class="muted small">None recorded.</p>`}</div>
+        ${!isNew ? `<div class="card"><h3>History</h3><div id="hist" class="small muted">${online() ? "Loading…" : "History shows when you're online."}</div></div>` : ""}
+      </div>
+      <div>
+        <div class="card"><h3>Photo</h3><div class="photo-box">
+          <div id="photoSlot"><div class="nophoto">No photo</div></div>
+          <div style="flex:1;min-width:180px">
+            ${ro ? "" : `<button class="btn primary" id="photoBtn">${l.PhotoItemId || l._localKey ? "Retake photo" : "Take photo"}</button>
+              <label class="chk" style="margin-top:10px"><input type="checkbox" id="faceOpt" checked> Register the face for face recognition</label>
+              <p class="small muted">The face record lets you find this licence from a photo later, and warns if the same face is already on another licence.</p>
+              ${!isNew && (l.PhotoItemId || l._localKey) && !["Enrolled", "Waiting", "Check"].includes(l.FaceStatus) ? `<button class="btn sm" id="faceNow">Register face from this photo</button>` : ""}`}
+            ${l.FaceNote ? `<p class="small" style="color:var(--bad)">${esc(l.FaceNote)}</p>` : ""}
+            ${l.PhotoDate ? `<p class="small muted">Photo taken ${fmtDate(l.PhotoDate)}</p>` : ""}
+          </div></div></div>
+        <div class="card"><div class="bar" style="margin-bottom:10px"><h3 style="margin:0">ID card</h3><span class="grow"></span>
+            <button class="btn sm" id="pngBtn" title="Save the card as a picture (e.g. for the card printer's own software)">Save as picture</button>
+            ${ro ? "" : `<button class="btn primary sm" id="printBtn">Print card</button>`}</div>
+          <canvas id="cardCv" class="cardview"></canvas>
+          <p class="small muted" style="text-align:center;margin:8px 0 0">${l.LastPrinted ? `Last printed ${fmtDate(l.LastPrinted)} · ${num(l.PrintCount)} card${num(l.PrintCount) === 1 ? "" : "s"} printed` : "Not printed yet"}</p>
+          ${ro ? "" : `<div class="small muted" style="margin-top:12px">Background</div><div class="bgpick" id="bgPick"></div>`}
+        </div>
+      </div>
+    </div>`;
+
+  const form = $("#licForm");
+  form.oninput = () => { S.dirty = true; schedulePreview(); };
+  const val = () => Object.fromEntries([...new FormData(form)].map(([k, v]) => [k, String(v).trim()]));
+  const issueEl = form.elements.IssueDate, expEl = form.elements.ExpiryDate;
+  if (issueEl) issueEl.onchange = () => { if (isNew && issueEl.value) { expEl.value = addYears(issueEl.value, RULES.LICENCE_YEARS); schedulePreview(); } };
+
+  // photo
+  const showPhoto = async () => {
+    const u = DRAFT_PHOTO ? URL.createObjectURL(DRAFT_PHOTO) : await photoUrl(l);
+    if (u) $("#photoSlot").innerHTML = `<img src="${u}" alt="Licence holder">`;
+  };
+  showPhoto();
+  const photoBtn = $("#photoBtn");
+  if (photoBtn) photoBtn.onclick = async () => {
+    const blob = await takeLicencePhoto(); if (!blob) return;
+    const withFace = $("#faceOpt").checked;
+    if (isNew) { DRAFT_PHOTO = blob; S.dirty = true; S.draftFace = withFace; showPhoto(); schedulePreview(); return; }
+    await queuePhoto(l, blob, withFace); toast("Photo saved" + (online() ? "" : " on this device - it will be sent when you're online"));
+    route(true);
+  };
+  const faceNow = $("#faceNow");
+  if (faceNow) faceNow.onclick = async () => {
+    const b = await photoBlob(l); if (!b) return toast("The photo isn't available on this device");
+    await enqueue({ kind: "face", ref, file: { blob: b }, label: `Face record · ${l.Title}` });
+    mergeLocal(LISTS.licences, ref, { FaceStatus: "Waiting" }); route(true);
+  };
+
+  // card preview + background picker
+  const cv = $("#cardCv");
+  const drawPreview = async () => {
+    const data = { ...l, ...val() };
+    const bgMeta = D.backgrounds.find(b => b.fileId === S.card.bg);
+    const photoB = DRAFT_PHOTO || await photoBlob(l);
+    const photo = photoB ? await blobImage(photoB) : null;
+    const bg = { image: bgMeta ? await bgImage(bgMeta) : null, orientation: bgMeta ? (bgMeta.Orientation || "Landscape") : S.card.orientation,
+      textColour: bgMeta?.TextColour || "Dark", showHeader: bgMeta ? bgMeta.ShowHeader !== "No" && bgMeta.ShowHeader !== false : true, panel: bgMeta?.TextPanel === "Yes" };
+    ZDCard.drawCard(cv, { ...data, LicenceNo: data.Title }, photo, bg, BRAND);
+    cv.classList.toggle("portrait", bg.orientation === "Portrait");
+  };
+  function schedulePreview() { clearTimeout(PREVIEW_T); PREVIEW_T = setTimeout(drawPreview, 150); }
+  drawPreview();
+  const pick = $("#bgPick");
+  if (pick) {
+    const opts = [...actBg.map(b => ({ key: b.fileId, label: b.Title || b.name, b })),
+      { key: "none-Landscape", label: "No background", orientation: "Landscape" }, { key: "none-Portrait", label: "No background (upright)", orientation: "Portrait" }];
+    const curKey = S.card.bg || "none-" + S.card.orientation;
+    pick.innerHTML = opts.map(o => `<button type="button" data-bg="${esc(o.key)}" class="${o.key === curKey ? "on" : ""}" title="${esc(o.label)}">
+      ${o.b ? `<img class="sw ${o.b.Orientation === "Portrait" ? "p" : ""}" data-bgimg="${esc(o.key)}" alt="">` : `<div class="sw ${o.orientation === "Portrait" ? "p" : ""}"></div>`}${esc(o.label)}</button>`).join("");
+    $$("img[data-bgimg]").forEach(async img => { const im = await bgImage(D.backgrounds.find(b => b.fileId === img.dataset.bgimg)); if (im) img.src = im.src; });
+    $$("[data-bg]").forEach(b => b.onclick = () => {
+      const k = b.dataset.bg, meta = D.backgrounds.find(x => x.fileId === k);
+      S.card = meta ? { ref, bg: k, orientation: meta.Orientation || "Landscape" } : { ref, bg: "", orientation: k.split("-")[1] };
+      $$("[data-bg]").forEach(x => x.classList.toggle("on", x === b));
+      if (!isNew) S.cardChanged = true;
+      S.dirty = true; drawPreview();
+    });
+  }
+  $("#pngBtn").onclick = async () => {
+    await drawPreview();
+    cv.toBlob(b => { const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = `Card-${(val().Title || "new").replace(/[^\w-]+/g, "_")}.png`; a.click(); }, "image/png");
+  };
+  const printBtn = $("#printBtn");
+  if (printBtn) printBtn.onclick = async () => {
+    if (S.dirty || isNew) return toast("Save the licence first, then print the card");
+    if (statusOf(l) !== "Active" && statusOf(l) !== "Expiring" && !confirm(`This licence is ${statusOf(l)}. Print a card anyway?`)) return;
+    if (!(l.PhotoItemId || l._localKey) && !confirm("There's no photo. Print the card without one?")) return;
+    await drawPreview();
+    ZDCard.printCard(cv, printSettings());
+    const fields = { LastPrinted: today(), PrintCount: num(l.PrintCount) + 1 };
+    mergeLocal(LISTS.licences, ref, fields);
+    await enqueue({ kind: "upsert", list: LISTS.licences, ref, fields, label: `Card printed · ${l.Title}` });
+    logActivity("Card printed", l, (D.backgrounds.find(b => b.fileId === S.card.bg)?.name) || "No background");
+  };
+
+  // save
+  const saveBtn = $("#saveBtn");
+  if (saveBtn) saveBtn.onclick = async () => {
+    const f = val();
+    const missing = [["Surname", "Surname"], ["GivenNames", "Given names"], ["DateOfBirth", "Date of birth"], ["Title", "Licence no"], ["LicenceType", "Licence type"], ["IssueDate", "Issued"], ["ExpiryDate", "Expires"]].filter(([k]) => !f[k]).map(x => x[1]);
+    if (missing.length) return toast("Please fill in: " + missing.join(", "));
+    if (f.ExpiryDate < f.IssueDate) return toast("The expiry date is before the issue date");
+    const dup = D.licences.find(x => x.ClientRef !== ref && norm(x.Title) === norm(f.Title));
+    if (dup) return toast(`Licence no ${f.Title} is already used for ${fullName(dup)}`);
+    const bgMeta = D.backgrounds.find(b => b.fileId === S.card.bg);
+    Object.assign(f, { CardBackground: bgMeta ? bgMeta.name : "", CardOrientation: bgMeta ? (bgMeta.Orientation || "Landscape") : S.card.orientation });
+    if (isNew) f.CapturedBy = me();
+    saveBtn.disabled = true;
+    mergeLocal(LISTS.licences, ref, f);
+    await enqueue({ kind: "upsert", list: LISTS.licences, ref, fields: f, label: `${isNew ? "New licence" : "Licence changes"} · ${f.Title}` });
+    const saved = lic(ref);
+    logActivity(isNew ? "Licence created" : "Licence updated", saved);
+    if (isNew && DRAFT_PHOTO) { await queuePhoto(saved, DRAFT_PHOTO, S.draftFace !== false); DRAFT_PHOTO = null; }
+    S.dirty = false; S.newRef = null;
+    toast(online() ? "Saved" : "Saved on this device - it will be sent when you're online");
+    if (isNew) location.hash = "#/licence/" + encodeURIComponent(ref); else route(true);
+  };
+
+  // firearms
+  const addGun = $("#addGun");
+  if (addGun) addGun.onclick = () => gunDialog(l, null);
+  $$("[data-gun]").forEach(b => b.onclick = () => gunDialog(l, D.firearms.find(g => g.ClientRef === b.dataset.gun)));
+
+  // history (online only)
+  if (!isNew && online()) loadHistory(ref);
+}
+async function queuePhoto(l, blob, withFace) {
+  const now = new Date(), stamp = `${ymd(now).replace(/-/g, "")}-${hhmm(now).replace(":", "")}${String(now.getSeconds()).padStart(2, "0")}`;
+  const localKey = `photo:local-${l.ClientRef}-${stamp}`;
+  await kvSet(localKey, blob);
+  const fields = { PhotoDate: today() };
+  mergeLocal(LISTS.licences, l.ClientRef, fields, { _localKey: localKey });
+  await enqueue({ kind: "upsert", list: LISTS.licences, ref: l.ClientRef, fields, label: `Photo · ${l.Title}`,
+    file: { blob, localKey, type: "image/jpeg", path: `${l.ClientRef}/${stamp}.jpg` } });
+  logActivity("Photo taken", l);
+  if (withFace) {
+    await enqueue({ kind: "face", ref: l.ClientRef, file: { blob }, label: `Face record · ${l.Title}` });
+    mergeLocal(LISTS.licences, l.ClientRef, { FaceStatus: "Waiting", FaceNote: "" });
+  }
+}
+async function loadHistory(ref) {
+  const el = $("#hist");
+  try {
+    let rows;
+    if (DEMO) rows = (await listItems(LISTS.activity)).filter(r => r.LicenceRef === ref);
+    else {
+      rows = []; let url = `/sites/${siteId}/lists/${LISTS.activity}/items?$filter=fields/LicenceRef eq '${ref}'&expand=fields&$top=200`;
+      while (url) { const j = await graph(url, { headers: { Prefer: "HonorNonIndexedQueriesWarningMayFailRandomly" } }); rows.push(...j.value.map(i => i.fields)); url = j["@odata.nextLink"]; }
+    }
+    rows.sort((a, b) => String(b.ActivityAt).localeCompare(String(a.ActivityAt)));
+    if (el && el.isConnected) el.innerHTML = rows.length ? `<ul class="plain">${rows.slice(0, 50).map(r => `<li><span class="mono">${esc(fmtDate(String(r.ActivityAt).slice(0, 10)) + " " + String(r.ActivityAt).slice(11))}</span><span><b>${esc(r.Title)}</b> · ${esc(r.ActivityBy)}${r.Details ? ` <span class="muted">· ${esc(r.Details)}</span>` : ""}</span></li>`).join("")}</ul>` : "Nothing recorded yet.";
+  } catch (e) { if (el && el.isConnected) el.textContent = isMissingList(e) ? `The ${LISTS.activity} list isn't set up.` : "History couldn't be loaded."; }
+}
+function gunDialog(l, g) {
+  const opt = (arr, v) => [...new Set([...(arr || []), ...(v ? [v] : [])])].map(o => `<option ${o === v ? "selected" : ""}>${esc(o)}</option>`).join("");
+  openDialog({ title: g ? "Edit firearm" : "Add firearm", save: "Save", extra: g ? `<button type="button" class="btn danger" id="gunDel">Remove from licence</button>` : "",
+    body: `<div class="grid2"><label>Serial no *<input type="text" name="Title" value="${esc(g?.Title)}" class="mono"></label>
+      <label>Type<select name="FirearmType">${opt(CHOICES.FIREARM_TYPES, g?.FirearmType || CHOICES.FIREARM_TYPES[0])}</select></label>
+      <label>Make<input type="text" name="Make" value="${esc(g?.Make)}"></label><label>Model<input type="text" name="Model" value="${esc(g?.Model)}"></label>
+      <label>Calibre<input type="text" name="Calibre" value="${esc(g?.Calibre)}"></label></div>`,
+    onSubmit: async f => {
+      if (!f.Title) { toast("The serial number is needed"); return false; }
+      const ref = g?.ClientRef || newRef();
+      Object.assign(f, { LicenceRef: l.ClientRef, LicenceNo: l.Title, Removed: "No" });
+      mergeLocal(LISTS.firearms, ref, f);
+      await enqueue({ kind: "upsert", list: LISTS.firearms, ref, fields: f, label: `Firearm ${f.Title} · ${l.Title}` });
+      logActivity(g ? "Firearm updated" : "Firearm added", l, f.Title); route(true);
+    } });
+  const del = $("#gunDel");
+  if (del) del.onclick = async () => {
+    if (!confirm("Remove this firearm from the licence?")) return;
+    $("#dlg").close();
+    mergeLocal(LISTS.firearms, g.ClientRef, { Removed: "Yes" });
+    await enqueue({ kind: "upsert", list: LISTS.firearms, ref: g.ClientRef, fields: { Removed: "Yes" }, label: `Firearm removed · ${l.Title}` });
+    logActivity("Firearm removed", l, g.Title); route(true);
+  };
+}
+
+/* =====================================================================
+   FIND BY FACE
+   ===================================================================== */
+function pageFace() {
+  $("#main").innerHTML = banners() + `<div class="bar"><h2>Find a licence by face</h2></div>
+    <div class="card"><p>Take a photo of the person (or load one). The face is compared with every licence holder who has a face record, and the closest matches are listed. The photo isn't kept.</p>
+      <button class="btn primary" id="fbf" ${online() ? "" : "disabled"}>Take photo</button>
+      ${online() ? "" : `<p class="small" style="color:var(--warn)">Needs an internet connection.</p>`}<div id="fbfOut" style="margin-top:14px"></div></div>`;
+  $("#fbf").onclick = async () => {
+    const r = await openCamera({ title: "Find by face", sub: "One face in the picture, looking at the camera.", allowFile: true, guide: "oval", prefKey: "zd-cam-photo",
+      onShot: async (blob, msg) => { msg("Searching…", true); return faceCall({ action: "licenseeSearch", image: await blobToB64(await shrink(blob, 1200)) }); } });
+    if (!r) return;
+    const out = $("#fbfOut");
+    const hits = (r.matches || []).map(m => ({ ...m, l: lic(m.ref) })).filter(m => m.l);
+    out.innerHTML = hits.length ? `<ul class="plain">${hits.map(m => `<li><img class="thumb" data-photo="${esc(m.ref)}" alt=""><span class="grow"><b>${esc(fullName(m.l))}</b><br><span class="mono small">${esc(m.l.Title)}</span> · ${statusOf(m.l)}</span>
+      <span class="tag ${m.similarity >= 95 ? "ok" : "warn"}">${m.similarity}% match</span><a class="btn sm" href="#/licence/${encodeURIComponent(m.ref)}">Open</a></li>`).join("")}</ul>`
+      : `<p class="muted">No licence holder matches this face.</p>`;
+    $$("img[data-photo]").forEach(async img => { const u = await photoUrl(lic(img.dataset.photo) || {}); if (u) img.src = u; });
+  };
+}
+
+/* =====================================================================
+   CARD BACKGROUNDS (Admin) - pictures in the CardBackgrounds library
+   ===================================================================== */
+async function pageBackgrounds() {
+  const card = ZDCard.SIZE;
+  $("#main").innerHTML = banners() + `<div class="bar"><h2>Card backgrounds</h2><span class="grow"></span>
+      <label class="btn primary" style="margin:0">+ Add background<input type="file" id="bgFile" accept="image/png,image/jpeg" hidden></label></div>
+    <div class="banner info">Best size: <b>${card.Landscape.w} × ${card.Landscape.h} pixels</b> (landscape) or <b>${card.Portrait.w} × ${card.Portrait.h}</b> (upright) - the card at 300 dpi. Any other size still fills the whole card: the picture is enlarged until it covers the card and the overflow is trimmed evenly. The previews below show exactly what prints.</div>
+    <div class="grid2" id="bgList">${D.backgrounds.length ? "" : `<div class="card empty">No backgrounds yet. Cards can still be printed with no background.</div>`}</div>`;
+  const list = $("#bgList");
+  for (const b of D.backgrounds) {
+    const div = document.createElement("div"); div.className = "card";
+    div.innerHTML = `<div class="bar" style="margin-bottom:8px"><b>${esc(b.Title || b.name)}</b><span class="grow"></span>
+        <span class="tag ${b.Active === "No" ? "" : "ok"}">${b.Active === "No" ? "Hidden" : "In use"}</span><button class="btn sm" data-edit>Edit</button></div>
+      <canvas class="cardview ${b.Orientation === "Portrait" ? "portrait" : ""}"></canvas>
+      <p class="small muted" data-info style="margin:8px 0 0">${esc(b.name)}</p>`;
+    list.appendChild(div);
+    div.querySelector("[data-edit]").onclick = () => bgDialog(b);
+    const img = await bgImage(b);
+    ZDCard.drawCard(div.querySelector("canvas"), { ...SAMPLE, LicenceNo: SAMPLE.Title }, null,
+      { image: img, orientation: b.Orientation || "Landscape", textColour: b.TextColour || "Dark", showHeader: b.ShowHeader !== "No", panel: b.TextPanel === "Yes" }, BRAND);
+    if (img) div.querySelector("[data-info]").innerHTML = `${esc(b.name)} · ${img.naturalWidth} × ${img.naturalHeight} px · ${esc(trimNote(img.naturalWidth, img.naturalHeight, b.Orientation))}`;
+  }
+  $("#bgFile").onchange = async e => {
+    const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+    if (!online()) return toast("Adding a background needs an internet connection");
+    const img = await blobImage(f).catch(() => null); if (!img) return toast("That file isn't a picture this browser can read");
+    bgDialog(null, f, img);
+  };
+}
+function trimNote(w, h, orientation) {
+  const s = ZDCard.SIZE[orientation === "Portrait" ? "Portrait" : "Landscape"];
+  const c = ZDCard.coverRect(w, h, s.w, s.h);
+  const sideMm = (w - c.sw) / w * (orientation === "Portrait" ? 54 : 85.6), topMm = (h - c.sh) / h * (orientation === "Portrait" ? 85.6 : 54);
+  const low = Math.min(w / s.w, h / s.h) < 0.75 ? " - low resolution, may print soft" : "";
+  if (sideMm < 0.3 && topMm < 0.3) return "fits the card exactly" + low;
+  return (sideMm >= topMm ? `about ${(sideMm / 2).toFixed(1)} mm trimmed from each side` : `about ${(topMm / 2).toFixed(1)} mm trimmed from top and bottom`) + low;
+}
+function bgDialog(b, file, img) {
+  const guess = img ? (img.naturalHeight > img.naturalWidth ? "Portrait" : "Landscape") : (b.Orientation || "Landscape");
+  const o = (arr, v) => arr.map(x => `<option ${x === v ? "selected" : ""}>${x}</option>`).join("");
+  openDialog({ title: b ? "Edit background" : "Add background", save: b ? "Save" : "Upload",
+    body: `<label>Name<input type="text" name="Title" value="${esc(b?.Title || (file?.name || "").replace(/\.\w+$/, ""))}"></label>
+      <div class="grid2"><label>Card direction<select name="Orientation">${o(["Landscape", "Portrait"], b?.Orientation || guess)}</select></label>
+        <label>Text colour<select name="TextColour">${o(["Dark", "Light"], b?.TextColour || "Dark")}</select></label>
+        <label>Print the card heading<select name="ShowHeader">${o(["Yes", "No"], b?.ShowHeader || "Yes")}</select></label>
+        <label>Offer it on licences<select name="Active">${o(["Yes", "No"], b?.Active || "Yes")}</select></label>
+        <label>Shaded panel behind the text<select name="TextPanel">${o(["No", "Yes"], b?.TextPanel || "No")}</select></label></div>
+      <p class="small muted">Choose "No" for the heading when the picture already has the title printed on it. Use the shaded panel when the picture is busy and the text is hard to read.</p>`,
+    onSubmit: async f => {
+      if (!online()) { toast("Needs an internet connection"); return false; }
+      try {
+        if (b) { await setFileFields(LISTS.backgrounds, b.id, f); Object.assign(b, f); }
+        else {
+          const name = `${(f.Title || "background").replace(/[^\w -]+/g, "").trim() || "background"}-${Date.now().toString(36)}.${file.type === "image/png" ? "png" : "jpg"}`;
+          const added = await addLibraryFile(LISTS.backgrounds, name, file, f);
+          await kvSet("bg:" + added.fileId, file);
+          D.backgrounds.push({ ...added, ...f });
+        }
+        saveSnapshot(); pageBackgrounds();
+      } catch (e) { toast(isForbidden(e) ? "SharePoint refused this (no permission)" : e.message); return false; }
+    } });
+}
+
+/* =====================================================================
+   STAFF & ROLES (Admin) + face records
+   ===================================================================== */
+async function pageStaff() {
+  const rows = [...D.staff].sort((a, b) => String(a.Title).localeCompare(String(b.Title)));
+  $("#main").innerHTML = banners() + `<div class="bar"><h2>Staff &amp; roles</h2><span class="grow"></span><button class="btn primary" id="addStaff">+ Add person</button></div>
+    <div class="card" style="padding:0">${rows.length ? `<table><thead><tr><th>Name</th><th>Microsoft sign-in</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>
+      ${rows.map(s => `<tr><td><b>${esc(s.Title)}</b></td><td>${esc(s.Email)}</td><td>${esc(s.HubRole)}</td><td>${esc(s.StaffStatus || "Active")}</td>
+        <td style="text-align:right">${s._pending ? `<span class="tag info">waiting</span> ` : ""}<button class="btn sm" data-st="${esc(s.ClientRef || s.id)}">Edit</button></td></tr>`).join("")}</tbody></table>`
+      : `<div class="empty">Nobody yet - add yourself as Admin first.</div>`}</div>
+    <div class="card small"><b>Roles</b>: <b>Admin</b> - everything, including backgrounds and staff. <b>Officer</b> - add and change licences, take photos, print cards, find by face. <b>Viewer</b> - look only.<br>
+      Everyone here also needs to be in the <b>${esc(BRAND.OFFICE_GROUP)}</b> SharePoint group (the group is what actually allows reading and changing the lists).</div>
+    <div class="card"><div class="bar" style="margin-bottom:8px"><h3 style="margin:0">Sign-in face records</h3><span class="grow"></span><button class="btn sm" id="loadFaces">Show</button></div>
+      <div id="faces" class="small muted">Only administrators listed in the face service's ADMIN_USERS setting can see or reset these.</div></div>`;
+  $("#addStaff").onclick = () => staffDialog(null);
+  $$("[data-st]").forEach(b => b.onclick = () => staffDialog(D.staff.find(s => (s.ClientRef || s.id) === b.dataset.st)));
+  $("#loadFaces").onclick = async () => {
+    const box = $("#faces"); box.textContent = "Loading…";
+    try {
+      const r = await faceCall({ action: "list" });
+      box.innerHTML = r.employees.length ? `<ul class="plain">${r.employees.map(e => `<li><span class="grow">${esc(e.email)}</span><button class="btn sm danger" data-reset="${esc(e.email)}">Reset</button></li>`).join("")}</ul>` : "Nobody has set up a face check yet.";
+      $$("[data-reset]").forEach(b => b.onclick = async () => {
+        if (!confirm(`Remove ${b.dataset.reset}'s face record? They'll set it up again at their next sign-in.`)) return;
+        try { await faceCall({ action: "reset", email: b.dataset.reset }); toast("Face record removed"); $("#loadFaces").click(); } catch (e) { toast(e.message); }
+      });
+    } catch (e) { box.textContent = e.status === 403 ? "Your sign-in isn't in the face service's ADMIN_USERS list." : isNetErr(e) ? "Needs an internet connection." : e.message; }
+  };
+}
+function staffDialog(s) {
+  const o = (arr, v) => arr.map(x => `<option ${x === v ? "selected" : ""}>${x}</option>`).join("");
+  openDialog({ title: s ? "Edit person" : "Add person",
+    body: `<label>Name *<input type="text" name="Title" value="${esc(s?.Title || (!D.staff.length ? account?.name || "" : ""))}"></label>
+      <label>Microsoft sign-in (email) *<input type="email" name="Email" value="${esc(s?.Email || (!D.staff.length ? me() : ""))}"></label>
+      <div class="grid2"><label>Role<select name="HubRole">${o(ROLES, s?.HubRole || (!D.staff.length ? "Admin" : "Officer"))}</select></label>
+        <label>Status<select name="StaffStatus">${o(["Active", "Left"], s?.StaffStatus || "Active")}</select></label></div>`,
+    onSubmit: async f => {
+      if (!f.Title || !f.Email) { toast("Name and sign-in are needed"); return false; }
+      f.Email = f.Email.toLowerCase();
+      if (D.staff.some(x => x !== s && String(x.Email).toLowerCase() === f.Email)) { toast("That sign-in is already on the list"); return false; }
+      const ref = s?.ClientRef || newRef();
+      mergeLocal(LISTS.staff, ref, f);
+      await enqueue({ kind: "upsert", list: LISTS.staff, ref, fields: f, label: `Staff · ${f.Title}` });
+      if (S.roleSource === "setup" && f.Email === me() && f.HubRole === "Admin") S.roleSource = "staff";
+      pageStaff();
+    } });
+}
+
+/* =====================================================================
+   SETTINGS - card printer adjustment (per computer), offline, demo
+   ===================================================================== */
+const PRINT_KEY = () => storeKey("zd-print");
+function printSettings() { try { return Object.assign({ bleedMm: 0.5, offsetXmm: 0, offsetYmm: 0 }, JSON.parse(localStorage.getItem(PRINT_KEY()) || "{}")); } catch { return { bleedMm: 0.5, offsetXmm: 0, offsetYmm: 0 }; } }
+function pageSettings() {
+  const p = printSettings(), passAt = facePass()?.at;
+  $("#main").innerHTML = banners() + `<div class="bar"><h2>Settings</h2></div>
+    <div class="card"><h3>Card printer (this computer only)</h3>
+      <p class="small muted">In the print window choose the card printer, set <b>Margins: None</b> and <b>Scale: 100%</b> (or "Actual size"), and turn off headers and footers. If the picture still sits off-centre on the card, nudge it here, print the test card, and repeat.</p>
+      <div class="grid3" id="pf">
+        <label>Bleed - extra beyond each edge (mm)<input type="number" step="0.1" min="0" max="3" name="bleedMm" value="${p.bleedMm}"></label>
+        <label>Move right (mm, minus = left)<input type="number" step="0.1" min="-5" max="5" name="offsetXmm" value="${p.offsetXmm}"></label>
+        <label>Move down (mm, minus = up)<input type="number" step="0.1" min="-5" max="5" name="offsetYmm" value="${p.offsetYmm}"></label></div>
+      <button class="btn" id="saveP">Save</button> <button class="btn" id="testP">Print test card</button>
+      <canvas id="testCv" class="cardview" style="margin-top:14px"></canvas></div>
+    <div class="card"><h3>Face check and offline work</h3>
+      <p class="small">Last face check on this device: <b>${passAt ? esc(localStamp(new Date(passAt).toISOString())) : "none"}</b>. A new one is asked for every new browser session and after ${RULES.FACE_RECHECK_HOURS} hours.
+        With no internet, this device can keep working for ${RULES.OFFLINE_GRACE_HOURS} hours after a face check.</p>
+      <p class="small">Copy of the register on this device: <b>${D.at ? esc(localStamp(D.at)) : "none"}</b> · changes waiting to send: <b>${SYNC.waiting}</b></p>
+      <button class="btn" id="recheck">Do a face check now</button>
+      ${DEMO ? ` <label class="chk" style="margin-top:12px"><input type="checkbox" id="fakeOff" ${FORCE_OFFLINE ? "checked" : ""}> Pretend to be offline (demo testing)</label>` : ""}</div>`;
+  drawTestCard($("#testCv"));
+  const read = () => Object.fromEntries($$("#pf input").map(i => [i.name, Math.round((+i.value || 0) * 10) / 10]));
+  $("#saveP").onclick = () => { localStorage.setItem(PRINT_KEY(), JSON.stringify(read())); toast("Saved for this computer"); };
+  $("#testP").onclick = () => ZDCard.printCard($("#testCv"), read());
+  $("#recheck").onclick = () => { clearFacePass(); location.reload(); };
+  const fo = $("#fakeOff");
+  if (fo) fo.onchange = () => { FORCE_OFFLINE = fo.checked; sessionStorage.setItem("zd-fake-offline", fo.checked ? "1" : ""); renderWho(); if (!fo.checked) flushSoon(200); route(true); };
+}
+/* Test card: lines 1, 2 and 3 mm in from every edge, a centre cross and arrows - shows which way to nudge */
+function drawTestCard(cv) {
+  const { w, h } = ZDCard.SIZE.Landscape, mm = ZDCard.MM; cv.width = w; cv.height = h;
+  const g = cv.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, w, h);
+  [1, 2, 3].forEach((d, i) => { g.strokeStyle = ["#d00", "#06c", "#090"][i]; g.lineWidth = 3; g.strokeRect(d * mm, d * mm, w - 2 * d * mm, h - 2 * d * mm); });
+  g.strokeStyle = "#000"; g.lineWidth = 2; g.beginPath(); g.moveTo(w / 2 - 40, h / 2); g.lineTo(w / 2 + 40, h / 2); g.moveTo(w / 2, h / 2 - 40); g.lineTo(w / 2, h / 2 + 40); g.stroke();
+  g.fillStyle = "#000"; g.font = "700 30px Segoe UI, Arial"; g.textAlign = "center";
+  g.fillText("TOP", w / 2, 80); g.fillText("BOTTOM", w / 2, h - 60); g.save(); g.translate(70, h / 2); g.rotate(-Math.PI / 2); g.fillText("LEFT", 0, 0); g.restore();
+  g.save(); g.translate(w - 60, h / 2); g.rotate(Math.PI / 2); g.fillText("RIGHT", 0, 0); g.restore();
+  g.font = "500 22px Segoe UI, Arial"; g.fillText("Red 1 mm · Blue 2 mm · Green 3 mm from the edge", w / 2, h / 2 + 90);
+  g.fillText("All three should show evenly on every side", w / 2, h / 2 + 122);
+}
+if (DEMO && sessionStorage.getItem("zd-fake-offline")) FORCE_OFFLINE = true;
+
+/* ---------------- dialog + sync panel ---------------- */
+function openDialog({ title, body, save = "Save", extra = "", onSubmit }) {
+  const dlg = $("#dlg"), form = $("#dlgForm");
+  $("#dlgT").textContent = title; $("#dlgB").innerHTML = body; $("#dlgOk").textContent = save; $("#dlgOk").hidden = !save;
+  const foot = form.querySelector(".df"); foot.querySelectorAll(".extra").forEach(x => x.remove());
+  if (extra) { const s = document.createElement("span"); s.className = "extra"; s.style.marginRight = "auto"; s.innerHTML = extra; foot.prepend(s); }
+  $("#dlgX").onclick = () => dlg.close();
+  form.onsubmit = async e => {
+    e.preventDefault();
+    const f = Object.fromEntries([...new FormData(form)].map(([k, v]) => [k, String(v).trim()]));
+    $("#dlgOk").disabled = true;
+    try { const r = await onSubmit?.(f); if (r !== false) dlg.close(); } finally { $("#dlgOk").disabled = false; }
+  };
+  dlg.showModal();
+}
+async function openSyncPanel() {
+  const ops = await qMine();
+  openDialog({ title: ops.length ? `${ops.length} change${ops.length === 1 ? "" : "s"} waiting to send` : "Everything has been sent", save: ops.length ? "Send now" : "",
+    body: (ops.length ? `<ul class="plain">${ops.map(o => `<li><span class="grow"><b>${esc(o.label)}</b><br><span class="small muted">${esc(localStamp(o.created))}${o.tries ? ` · ${o.tries} tr${o.tries === 1 ? "y" : "ies"}` : ""}</span>${o.error ? `<br><span class="small" style="color:var(--bad)">${esc(o.error)}</span>` : ""}</span>
+        <button type="button" class="btn sm danger" data-qdrop="${o.qid}">Discard</button></li>`).join("")}</ul>` : `<p class="muted">Nothing is waiting on this device.</p>`)
+      + `<p class="small muted">${online() ? "Changes are sent automatically while there's a connection." : "This device is offline. Changes will be sent automatically when the connection is back."} Nothing is lost if you close the app.</p>`,
+    onSubmit: async () => { await flushQueue(); if (SYNC.waiting) toast(online() ? "Some changes couldn't be sent - open this panel to see why" : "Still offline - they'll be sent when you're connected"); } });
+  $$("[data-qdrop]").forEach(b => b.onclick = async () => {
+    if (!confirm("Discard this change? It hasn't reached SharePoint and will be lost.")) return;
+    await qDel(+b.dataset.qdrop); await qCount(); $("#dlg").close(); await loadData(); route(true); openSyncPanel();
+  });
+}
+</script>
+</body>
+</html>
