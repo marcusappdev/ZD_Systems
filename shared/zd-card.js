@@ -88,6 +88,79 @@
   };
   const isDate = k => k === "DateOfBirth" || /Date$/.test(k);
 
+  /* =====================================================================
+     FIXED LAYOUTS for preprinted cards. The labels are already printed on
+     the card, so only the values (and the photo) are placed, each one
+     against its printed label. Positions are card pixels at 300 dpi
+     (1012 x 638), measured from a 300 dpi scan of the blank card;
+     y is the text baseline. 1 mm = 11.8 px.
+       key   - field from the licence / chosen firearm
+       max   - width available before the text is shrunk to fit
+       lines - wrap onto this many lines (Address)
+     ===================================================================== */
+  const LAYOUTS = {
+    "PNG Firearm Licence": {
+      orientation: "Landscape", needsFirearm: true,
+      photo: { x: 62, y: 92, w: 276, h: 368 },          // blank area on the left, ~2 mm clear of "SN"
+      size: 26,
+      fields: [
+        { key: "LicenceNo",   x: 452, y: 147, max: 325, size: 32 },   // after "Lic No:", left of the hologram
+        { key: "GivenNames",  x: 396, y: 258, max: 236 },             // under "First Name"
+        { key: "Surname",     x: 642, y: 258, max: 300, upper: true },// under "Last Name"
+        { key: "Address",     x: 396, y: 368, max: 545, size: 24, lines: 2, lineHeight: 30 },
+        { key: "Make",        x: 396, y: 482, max: 268 },             // under "Make"
+        { key: "FirearmType", x: 674, y: 482, max: 268 },             // under "Type"
+        { key: "SerialNo",    x: 82,  y: 501, max: 290, size: 24 },   // after "SN"
+        { key: "Registrar",   x: 156, y: 553, max: 220, size: 22 },   // after "Registrar"
+        { key: "Calibre",     x: 396, y: 564, max: 190, size: 24 },   // under "Calibre"
+        { key: "Purpose",     x: 596, y: 564, max: 175, size: 24 },   // under "Purpose"
+        { key: "ExpiryDate",  x: 779, y: 564, max: 170, size: 24 }    // under "Expiry Date"
+      ]
+    }
+  };
+
+  function wrapLines(ctx, text, max, lines) {
+    const words = String(text).replace(/\s*[\r\n]+\s*/g, ", ").split(/\s+/).filter(Boolean), out = [];
+    let cur = "";
+    for (const w of words) {
+      const t = cur ? cur + " " + w : w;
+      if (ctx.measureText(t).width <= max || !cur) cur = t;
+      else { out.push(cur); cur = w; }
+    }
+    if (cur) out.push(cur);
+    if (out.length > lines) out.splice(lines - 1, out.length, out.slice(lines - 1).join(" "));  // the rest goes on the last line (shrunk)
+    return out;
+  }
+
+  function drawTemplate(ctx, T, lic, photo, light) {
+    const P = T.photo;
+    if (photo) {
+      ctx.save(); roundRect(ctx, P.x, P.y, P.w, P.h, 8); ctx.clip();
+      const iw = photo.naturalWidth || photo.width, ih = photo.naturalHeight || photo.height;
+      const c = coverRect(iw, ih, P.w, P.h);
+      ctx.drawImage(photo, c.sx, c.sy, c.sw, c.sh, P.x, P.y, P.w, P.h);
+      ctx.restore();
+    }
+    ctx.textAlign = "left"; ctx.fillStyle = light ? "#ffffff" : "#111418";
+    for (const f of T.fields) {
+      let v = String(lic[f.key] ?? "").trim();
+      if (!v) continue;
+      if (isDate(f.key)) v = dmy(v);
+      if (f.upper) v = v.toUpperCase();
+      const size = f.size || T.size;
+      if (f.lines > 1) {
+        ctx.font = `600 ${size}px ${FONT}`;
+        wrapLines(ctx, v, f.max, f.lines).forEach((line, i) => {
+          fitFont(ctx, line, 600, size, 14, f.max, FONT);
+          ctx.fillText(line, f.x, f.y + i * (f.lineHeight || size + 6));
+        });
+      } else {
+        fitFont(ctx, v, 700, size, 14, f.max, FONT);
+        ctx.fillText(v, f.x, f.y);
+      }
+    }
+  }
+
   function roundRect(ctx, x, y, w, h, r) {
     ctx.beginPath();
     ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
@@ -99,9 +172,13 @@
        lic     - licence fields (Surname, GivenNames, LicenceNo, ...)
        photo   - an image/bitmap of the holder, or null
        bg      - { image|null, orientation:"Landscape"|"Portrait", textColour:"Dark"|"Light", showHeader:bool }
-       brand   - { CARD_TITLE, ISSUER } */
-  function drawCard(canvas, lic, photo, bg, brand) {
-    bg = bg || {};
+       brand   - { CARD_TITLE, ISSUER }
+       opts    - { print:true } leaves out a background marked preprinted
+                 (the card already has it), so only the values print */
+  function drawCard(canvas, lic, photo, bg, brand, opts) {
+    bg = bg || {}; opts = opts || {};
+    const T = bg.layout && LAYOUTS[bg.layout];
+    if (T) bg = { ...bg, orientation: T.orientation };
     const orientation = bg.orientation === "Portrait" ? "Portrait" : "Landscape";
     const L = layout(orientation, bg.showHeader !== false);
     canvas.width = L.w; canvas.height = L.h;
@@ -110,13 +187,14 @@
 
     // 1. Background - white card, then the image covering ALL of it
     ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, L.w, L.h);
-    if (bg.image) {
+    if (bg.image && !(opts.print && bg.preprinted)) {
       const iw = bg.image.naturalWidth || bg.image.width, ih = bg.image.naturalHeight || bg.image.height;
       const c = coverRect(iw, ih, L.w, L.h);
       ctx.drawImage(bg.image, c.sx, c.sy, c.sw, c.sh, 0, 0, L.w, L.h);
     }
 
     const light = bg.textColour === "Light";
+    if (T) { drawTemplate(ctx, T, lic, photo, light); return canvas; }
     const ink = light ? "#ffffff" : "#111418", soft = light ? "rgba(255,255,255,.82)" : "#4a5260";
     if (light) { ctx.shadowColor = "rgba(0,0,0,.55)"; ctx.shadowBlur = 4; ctx.shadowOffsetY = 1; }
     ctx.textBaseline = "alphabetic";
@@ -205,7 +283,7 @@
     if (img.complete) setTimeout(go, 50); else img.onload = go;
   }
 
-  const api = { DPI, MM, CARD_MM, SIZE, coverRect, layout, drawCard, printCard, dmy, fitFont };
+  const api = { DPI, MM, CARD_MM, SIZE, LAYOUTS, coverRect, layout, drawCard, printCard, dmy, fitFont, wrapLines };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.ZDCard = api;
 })(typeof window !== "undefined" ? window : globalThis);

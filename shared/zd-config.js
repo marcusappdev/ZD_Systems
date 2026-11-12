@@ -34,6 +34,7 @@ const ZD_FACE_API = "";
      LIST_PREFIX  - start of every SharePoint list / library name
                     (ZD_ -> ZD_Licences). Must match the setup script's -Prefix.
      OFFICE_GROUP - SharePoint group whose members can read/write the lists
+     REGISTRAR    - name printed after "Registrar" on cards that have it
      STORE_TAG    - keeps this site's offline data apart from other copies
                     opened in the same browser ("" = use the site address)
    ===================================================================== */
@@ -44,6 +45,7 @@ const ZD_BRAND = {
   ISSUER:       "ZD Systems",
   LIST_PREFIX:  "ZD_",
   OFFICE_GROUP: "ZD Licensing Office",
+  REGISTRAR:    "",                    // printed after "Registrar" on the PNG Firearm Licence card ("" = left blank)
   STORE_TAG:    null
 };
 
@@ -54,6 +56,7 @@ const ZD_BRAND = {
 const ZD_CHOICES = {
   LICENCE_TYPES: ["Shooter", "Collector", "Club member", "Security", "Dealer"],
   FIREARM_TYPES: ["Rifle", "Shotgun", "Handgun", "Other"],
+  PURPOSES:      ["Sport", "Hunting", "Security", "Collection", "Personal protection"],
   STATUSES:      ["Active", "Suspended", "Cancelled", "Expired"]
 };
 

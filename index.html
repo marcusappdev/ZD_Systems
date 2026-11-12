@@ -65,7 +65,9 @@ const S = { role: "", roleSource: "", route: "", param: "", filter: "all", q: ""
 let D = { licences: [], firearms: [], staff: [], backgrounds: [], at: "", offlineCopy: false };
 const canEdit = () => S.role === "Admin" || S.role === "Officer";
 const isAdmin = () => S.role === "Admin";
-const SAMPLE = { Title: "ZD-000123", GivenNames: "Sample", Surname: "Holder", LicenceType: "Shooter", DateOfBirth: "1985-06-14", Sex: "M", IssueDate: today(), ExpiryDate: addYears(today(), RULES.LICENCE_YEARS) };
+const SAMPLE = { Title: "ZD-000123", GivenNames: "Sample", Surname: "Holder", LicenceType: "Shooter", DateOfBirth: "1985-06-14", Sex: "M", IssueDate: today(), ExpiryDate: addYears(today(), RULES.LICENCE_YEARS),
+  Address: "Section 12, Allotment 4, Konedobu, National Capital District" };
+const SAMPLE_GUN = { Title: "SN 4471-22983", Make: "Remington", FirearmType: "Shotgun", Calibre: "12 gauge", Purpose: "Sport" };
 const arrFor = list => list === LISTS.licences ? D.licences : list === LISTS.firearms ? D.firearms : list === LISTS.staff ? D.staff : null;
 const lic = ref => D.licences.find(l => l.ClientRef === ref);
 const fullName = l => [l.GivenNames, String(l.Surname || "").toUpperCase()].filter(Boolean).join(" ");
@@ -535,6 +537,7 @@ async function pageLicence() {
             <button class="btn sm" id="pngBtn" title="Save the card as a picture (e.g. for the card printer's own software)">Save as picture</button>
             ${ro ? "" : `<button class="btn primary sm" id="printBtn">Print card</button>`}</div>
           <canvas id="cardCv" class="cardview"></canvas>
+          <div id="cardNote" class="small muted" style="text-align:center;margin-top:8px"></div>
           <p class="small muted" style="text-align:center;margin:8px 0 0">${l.LastPrinted ? `Last printed ${fmtDate(l.LastPrinted)} · ${num(l.PrintCount)} card${num(l.PrintCount) === 1 ? "" : "s"} printed` : "Not printed yet"}</p>
           ${ro ? "" : `<div class="small muted" style="margin-top:12px">Background</div><div class="bgpick" id="bgPick"></div>`}
         </div>
@@ -570,15 +573,31 @@ async function pageLicence() {
 
   // card preview + background picker
   const cv = $("#cardCv");
-  const drawPreview = async () => {
-    const data = { ...l, ...val() };
+  /* What goes on the card: the licence, plus one firearm for layouts that print a firearm */
+  const cardParts = async () => {
     const bgMeta = D.backgrounds.find(b => b.fileId === S.card.bg);
+    const bg = await bgFor(bgMeta, S.card.orientation);
+    const T = bg.layout && ZDCard.LAYOUTS[bg.layout];
+    if (T?.needsFirearm && !guns.some(g => g.ClientRef === S.card.gun)) S.card.gun = guns[0]?.ClientRef || "";
+    const gun = T?.needsFirearm ? guns.find(g => g.ClientRef === S.card.gun) : null;
     const photoB = DRAFT_PHOTO || await photoBlob(l);
-    const photo = photoB ? await blobImage(photoB) : null;
-    const bg = { image: bgMeta ? await bgImage(bgMeta) : null, orientation: bgMeta ? (bgMeta.Orientation || "Landscape") : S.card.orientation,
-      textColour: bgMeta?.TextColour || "Dark", showHeader: bgMeta ? bgMeta.ShowHeader !== "No" && bgMeta.ShowHeader !== false : true, panel: bgMeta?.TextPanel === "Yes" };
-    ZDCard.drawCard(cv, { ...data, LicenceNo: data.Title }, photo, bg, BRAND);
-    cv.classList.toggle("portrait", bg.orientation === "Portrait");
+    return { bgMeta, bg, T, gun, data: cardData({ ...l, ...val() }, gun), photo: photoB ? await blobImage(photoB) : null };
+  };
+  const drawPreview = async () => {
+    const c = await cardParts();
+    ZDCard.drawCard(cv, c.data, c.photo, c.bg, BRAND);
+    cv.classList.toggle("portrait", cv.height > cv.width);
+    const note = $("#cardNote"); if (!note) return;
+    note.innerHTML = (c.T?.needsFirearm ? (guns.length ? `Firearm on this card: <select id="gunSel" style="width:auto">${guns.map(g => `<option value="${esc(g.ClientRef)}" ${g.ClientRef === S.card.gun ? "selected" : ""}>${esc(g.Title)} · ${esc([g.Make, g.FirearmType].filter(Boolean).join(" "))}</option>`).join("")}</select>`
+        : `<span style="color:var(--warn)">This card prints a firearm - add one under "Firearms on this licence".</span>`) : "")
+      + (c.bg.preprinted ? `<div style="margin-top:6px">Preprinted card: only the photo and the details are printed - the background is shown here just to check the line-up.</div>` : "");
+    const gs = $("#gunSel"); if (gs) gs.onchange = () => { S.card.gun = gs.value; drawPreview(); };
+  };
+  /* The exact picture that goes to the printer (no background on preprinted cards) */
+  const printCanvas = async () => {
+    const c = await cardParts(), out = document.createElement("canvas");
+    ZDCard.drawCard(out, c.data, c.photo, c.bg, BRAND, { print: true });
+    return { out, c };
   };
   function schedulePreview() { clearTimeout(PREVIEW_T); PREVIEW_T = setTimeout(drawPreview, 150); }
   drawPreview();
@@ -599,20 +618,21 @@ async function pageLicence() {
     });
   }
   $("#pngBtn").onclick = async () => {
-    await drawPreview();
-    cv.toBlob(b => { const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = `Card-${(val().Title || "new").replace(/[^\w-]+/g, "_")}.png`; a.click(); }, "image/png");
+    const { out } = await printCanvas();
+    out.toBlob(b => { const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = `Card-${(val().Title || "new").replace(/[^\w-]+/g, "_")}.png`; a.click(); }, "image/png");
   };
   const printBtn = $("#printBtn");
   if (printBtn) printBtn.onclick = async () => {
     if (S.dirty || isNew) return toast("Save the licence first, then print the card");
     if (statusOf(l) !== "Active" && statusOf(l) !== "Expiring" && !confirm(`This licence is ${statusOf(l)}. Print a card anyway?`)) return;
     if (!(l.PhotoItemId || l._localKey) && !confirm("There's no photo. Print the card without one?")) return;
-    await drawPreview();
-    ZDCard.printCard(cv, printSettings());
+    const { out, c } = await printCanvas();
+    if (c.T?.needsFirearm && !c.gun && !confirm("No firearm is recorded on this licence. Print the card without one?")) return;
+    ZDCard.printCard(out, printSettings());
     const fields = { LastPrinted: today(), PrintCount: num(l.PrintCount) + 1 };
     mergeLocal(LISTS.licences, ref, fields);
     await enqueue({ kind: "upsert", list: LISTS.licences, ref, fields, label: `Card printed · ${l.Title}` });
-    logActivity("Card printed", l, (D.backgrounds.find(b => b.fileId === S.card.bg)?.name) || "No background");
+    logActivity("Card printed", l, [(c.bgMeta?.Title || c.bgMeta?.name) || "No background", c.gun ? "firearm " + c.gun.Title : ""].filter(Boolean).join(" · "));
   };
 
   // save
@@ -645,6 +665,19 @@ async function pageLicence() {
 
   // history (online only)
   if (!isNew && online()) loadHistory(ref);
+}
+/* Background settings from its library columns */
+async function bgFor(b, orientation = "Landscape") {
+  if (!b) return { image: null, orientation, textColour: "Dark", showHeader: true };
+  return { image: await bgImage(b), orientation: b.Orientation || "Landscape", textColour: b.TextColour || "Dark",
+    showHeader: b.ShowHeader !== "No" && b.ShowHeader !== false, panel: b.TextPanel === "Yes",
+    layout: b.Layout && b.Layout !== "Standard" ? b.Layout : "", preprinted: b.Preprinted === "Yes" };
+}
+/* Licence (+ one firearm) -> the field names the card layouts use */
+function cardData(l, gun) {
+  return { ...l, LicenceNo: l.Title, Registrar: BRAND.REGISTRAR || "",
+    SerialNo: gun?.Title || "", Make: gun?.Make || "", FirearmType: gun?.FirearmType || "", Calibre: gun?.Calibre || "",
+    Purpose: gun?.Purpose || "" };
 }
 async function queuePhoto(l, blob, withFace) {
   const now = new Date(), stamp = `${ymd(now).replace(/-/g, "")}-${hhmm(now).replace(":", "")}${String(now.getSeconds()).padStart(2, "0")}`;
@@ -679,7 +712,8 @@ function gunDialog(l, g) {
     body: `<div class="grid2"><label>Serial no *<input type="text" name="Title" value="${esc(g?.Title)}" class="mono"></label>
       <label>Type<select name="FirearmType">${opt(CHOICES.FIREARM_TYPES, g?.FirearmType || CHOICES.FIREARM_TYPES[0])}</select></label>
       <label>Make<input type="text" name="Make" value="${esc(g?.Make)}"></label><label>Model<input type="text" name="Model" value="${esc(g?.Model)}"></label>
-      <label>Calibre<input type="text" name="Calibre" value="${esc(g?.Calibre)}"></label></div>`,
+      <label>Calibre<input type="text" name="Calibre" value="${esc(g?.Calibre)}"></label>
+      <label>Purpose<select name="Purpose">${opt(["", ...(CHOICES.PURPOSES || [])], g?.Purpose || "")}</select></label></div>`,
     onSubmit: async f => {
       if (!f.Title) { toast("The serial number is needed"); return false; }
       const ref = g?.ClientRef || newRef();
@@ -732,14 +766,13 @@ async function pageBackgrounds() {
   for (const b of D.backgrounds) {
     const div = document.createElement("div"); div.className = "card";
     div.innerHTML = `<div class="bar" style="margin-bottom:8px"><b>${esc(b.Title || b.name)}</b><span class="grow"></span>
-        <span class="tag ${b.Active === "No" ? "" : "ok"}">${b.Active === "No" ? "Hidden" : "In use"}</span><button class="btn sm" data-edit>Edit</button></div>
+        ${b.Layout && b.Layout !== "Standard" ? `<span class="tag info">${esc(b.Layout)}</span>` : ""}${b.Preprinted === "Yes" ? `<span class="tag">Preprinted</span>` : ""}<span class="tag ${b.Active === "No" ? "" : "ok"}">${b.Active === "No" ? "Hidden" : "In use"}</span><button class="btn sm" data-edit>Edit</button></div>
       <canvas class="cardview ${b.Orientation === "Portrait" ? "portrait" : ""}"></canvas>
       <p class="small muted" data-info style="margin:8px 0 0">${esc(b.name)}</p>`;
     list.appendChild(div);
     div.querySelector("[data-edit]").onclick = () => bgDialog(b);
-    const img = await bgImage(b);
-    ZDCard.drawCard(div.querySelector("canvas"), { ...SAMPLE, LicenceNo: SAMPLE.Title }, null,
-      { image: img, orientation: b.Orientation || "Landscape", textColour: b.TextColour || "Dark", showHeader: b.ShowHeader !== "No", panel: b.TextPanel === "Yes" }, BRAND);
+    const bgs = await bgFor(b), img = bgs.image;
+    ZDCard.drawCard(div.querySelector("canvas"), cardData(SAMPLE, SAMPLE_GUN), null, bgs, BRAND);
     if (img) div.querySelector("[data-info]").innerHTML = `${esc(b.name)} · ${img.naturalWidth} × ${img.naturalHeight} px · ${esc(trimNote(img.naturalWidth, img.naturalHeight, b.Orientation))}`;
   }
   $("#bgFile").onchange = async e => {
@@ -766,7 +799,11 @@ function bgDialog(b, file, img) {
         <label>Text colour<select name="TextColour">${o(["Dark", "Light"], b?.TextColour || "Dark")}</select></label>
         <label>Print the card heading<select name="ShowHeader">${o(["Yes", "No"], b?.ShowHeader || "Yes")}</select></label>
         <label>Offer it on licences<select name="Active">${o(["Yes", "No"], b?.Active || "Yes")}</select></label>
-        <label>Shaded panel behind the text<select name="TextPanel">${o(["No", "Yes"], b?.TextPanel || "No")}</select></label></div>
+        <label>Shaded panel behind the text<select name="TextPanel">${o(["No", "Yes"], b?.TextPanel || "No")}</select></label>
+        <label>Field layout<select name="Layout">${o(["Standard", ...Object.keys(ZDCard.LAYOUTS)], b?.Layout || "Standard")}</select></label>
+        <label>Cards are preprinted with it<select name="Preprinted">${o(["No", "Yes"], b?.Preprinted || "No")}</select></label></div>
+      <p class="small muted"><b>Field layout</b>: "Standard" places a heading, photo and labelled fields; a named layout puts only the values against the labels already on that card design.
+        <b>Preprinted</b> "Yes": the picture is shown on screen to check the line-up but is <b>not printed</b> - the blank cards already carry it.</p>
       <p class="small muted">Choose "No" for the heading when the picture already has the title printed on it. Use the shaded panel when the picture is busy and the text is hard to read.</p>`,
     onSubmit: async f => {
       if (!online()) { toast("Needs an internet connection"); return false; }
