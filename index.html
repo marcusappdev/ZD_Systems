@@ -67,7 +67,7 @@ const canEdit = () => S.role === "Admin" || S.role === "Officer";
 const isAdmin = () => S.role === "Admin";
 const SAMPLE = { Title: "ZD-000123", GivenNames: "Sample", Surname: "Holder", LicenceType: "Shooter", DateOfBirth: "1985-06-14", Sex: "M", IssueDate: today(), ExpiryDate: addYears(today(), RULES.LICENCE_YEARS),
   Address: "Section 12, Allotment 4, Konedobu, National Capital District" };
-const SAMPLE_GUN = { Title: "SN 4471-22983", Make: "Remington", FirearmType: "Shotgun", Calibre: "12 gauge", Purpose: "Sport" };
+const SAMPLE_GUN = { Title: "4471-22983-RB", Make: "Remington", FirearmType: "Shotgun", Calibre: "12 gauge", Purpose: "Sport" };
 const arrFor = list => list === LISTS.licences ? D.licences : list === LISTS.firearms ? D.firearms : list === LISTS.staff ? D.staff : null;
 const lic = ref => D.licences.find(l => l.ClientRef === ref);
 const fullName = l => [l.GivenNames, String(l.Surname || "").toUpperCase()].filter(Boolean).join(" ");
