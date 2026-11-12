@@ -15,7 +15,7 @@
 (function (root) {
   const DPI = 300;
   const MM = DPI / 25.4;                         // pixels per millimetre
-  const CARD_MM = { w: 85.6, h: 54 };
+  const CARD_MM = { w: 85.6, h: 53.98 };                // ISO ID-1 / CR80
   const SIZE = {
     Landscape: { w: 1012, h: 638 },
     Portrait:  { w: 638,  h: 1012 }
@@ -268,10 +268,13 @@
     const W = portrait ? CARD_MM.h : CARD_MM.w, H = portrait ? CARD_MM.w : CARD_MM.h;
     const b = Math.max(0, Math.min(3, +s.bleedMm || 0));
     const png = canvas.toDataURL("image/png");
+    // The picture is "fixed", so it takes up no room on the page: the printout
+    // is always exactly ONE card, even when the printer's card size is a hair
+    // smaller than ours (ISO ID-1 is 85.60 x 53.98 mm).
     const html = `<!doctype html><html><head><title>Card</title><style>
       @page{size:${W}mm ${H}mm;margin:0}
-      html,body{margin:0;padding:0;width:${W}mm;height:${H}mm;overflow:hidden}
-      img{position:absolute;display:block;width:${W + 2 * b}mm;height:${H + 2 * b}mm;
+      html,body{margin:0;padding:0;width:0;height:0;overflow:hidden}
+      img{position:fixed;display:block;width:${W + 2 * b}mm;height:${H + 2 * b}mm;
           left:${-b + (+s.offsetXmm || 0)}mm;top:${-b + (+s.offsetYmm || 0)}mm}
       </style></head><body><img src="${png}"></body></html>`;
     const f = document.createElement("iframe");
