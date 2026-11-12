@@ -14,7 +14,7 @@
    holders, photos, staff details or passwords anywhere in this repo.
    ===================================================================== */
 const ZD_TENANT = {
-  CLIENT_ID: "<<ZD Licensing app client ID>>",          // Entra app "ZD Licensing" (SPA)
+  CLIENT_ID: "35593863-9ae0-4018-8dcc-a82a44e59c51",    // Entra app "ZD Licensing" (SPA)
   TENANT_ID: "ea9e105c-2df6-47ef-a8e3-b4aa1d788423",    // Concept Group (POC)
   SP_HOST:   "conceptcompg.sharepoint.com",
   SITE_PATH: "/sites/ZD_POC"
@@ -23,7 +23,7 @@ const ZD_TENANT = {
 /* Face recognition service (aws/zd-face-api). Leave "" in DEMO mode.
    Outside DEMO mode the app will not open without it: the face check at
    sign-in is mandatory. */
-const ZD_FACE_API = "";
+const ZD_FACE_API = "https://fffkbkm4phzo7ivupypwqq4xbq0razio.lambda-url.ap-southeast-2.on.aws/";   // zd-face-api (Concept-RPYC-POC account, Sydney)
 
 /* =====================================================================
    Branding and names
