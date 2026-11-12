@@ -67,7 +67,7 @@ const canEdit = () => S.role === "Admin" || S.role === "Officer";
 const isAdmin = () => S.role === "Admin";
 const SAMPLE = { Title: "ZD-000123", GivenNames: "Sample", Surname: "Holder", LicenceType: "Shooter", DateOfBirth: "1985-06-14", Sex: "M", IssueDate: today(), ExpiryDate: addYears(today(), RULES.LICENCE_YEARS),
   Address: "Section 12, Allotment 4, Konedobu, National Capital District" };
-const SAMPLE_GUN = { Title: "4471-22983-RB", Make: "Remington", FirearmType: "Shotgun", Calibre: "12 gauge", Purpose: "Sport" };
+const SAMPLE_GUN = { Title: "4471-22983-RB", Make: "Remington", FirearmType: "Shotgun", Calibre: "12 gauge", Purpose: "B" };
 const arrFor = list => list === LISTS.licences ? D.licences : list === LISTS.firearms ? D.firearms : list === LISTS.staff ? D.staff : null;
 const lic = ref => D.licences.find(l => l.ClientRef === ref);
 const fullName = l => [l.GivenNames, String(l.Surname || "").toUpperCase()].filter(Boolean).join(" ");
@@ -516,8 +516,8 @@ async function pageLicence() {
         </form>
         <div class="card"><div class="bar" style="margin-bottom:8px"><h3 style="margin:0">Firearms on this licence</h3><span class="grow"></span>
             ${!ro && !isNew ? `<button class="btn sm" id="addGun">+ Add firearm</button>` : ""}</div>
-          ${isNew ? `<p class="muted small">Save the licence first, then add firearms.</p>` : guns.length ? `<table><thead><tr><th>Serial no</th><th>Type</th><th>Make / model</th><th>Calibre</th><th></th></tr></thead><tbody>
-            ${guns.map(g => `<tr><td class="mono">${esc(g.Title)}</td><td>${esc(g.FirearmType)}</td><td>${esc([g.Make, g.Model].filter(Boolean).join(" "))}</td><td>${esc(g.Calibre)}</td>
+          ${isNew ? `<p class="muted small">Save the licence first, then add firearms.</p>` : guns.length ? `<table><thead><tr><th>Serial no</th><th>Type</th><th>Make / model</th><th>Calibre</th><th>Purpose</th><th></th></tr></thead><tbody>
+            ${guns.map(g => `<tr><td class="mono">${esc(g.Title)}</td><td>${esc(g.FirearmType)}</td><td>${esc([g.Make, g.Model].filter(Boolean).join(" "))}</td><td>${esc(g.Calibre)}</td><td title="${esc(purposeName(g.Purpose))}">${esc(g.Purpose)}</td>
               <td style="text-align:right">${g._pending ? `<span class="tag info">waiting</span> ` : ""}${ro ? "" : `<button class="btn sm" data-gun="${esc(g.ClientRef)}">Edit</button>`}</td></tr>`).join("")}</tbody></table>`
             : `<p class="muted small">None recorded.</p>`}</div>
         ${!isNew ? `<div class="card"><h3>History</h3><div id="hist" class="small muted">${online() ? "Loading…" : "History shows when you're online."}</div></div>` : ""}
@@ -666,6 +666,14 @@ async function pageLicence() {
   // history (online only)
   if (!isNew && online()) loadHistory(ref);
 }
+/* Purpose codes: stored and printed as the letter ("B"), shown with its meaning ("B - Self Protection") */
+const PURPOSE_LIST = (CHOICES.PURPOSES || []).map(p => Array.isArray(p) ? p : [p, p]);
+const purposeName = code => (PURPOSE_LIST.find(p => p[0] === code) || [])[1] || "";
+function purposeOptions(cur) {
+  const known = PURPOSE_LIST.some(p => p[0] === cur);
+  return `<option value="">-</option>` + PURPOSE_LIST.map(([c, n]) => `<option value="${esc(c)}" ${c === cur ? "selected" : ""}>${esc(c === n ? c : c + " - " + n)}</option>`).join("")
+    + (cur && !known ? `<option value="${esc(cur)}" selected>${esc(cur)} (old value - please choose a code)</option>` : "");
+}
 /* Background settings from its library columns */
 async function bgFor(b, orientation = "Landscape") {
   if (!b) return { image: null, orientation, textColour: "Dark", showHeader: true };
@@ -713,7 +721,7 @@ function gunDialog(l, g) {
       <label>Type<select name="FirearmType">${opt(CHOICES.FIREARM_TYPES, g?.FirearmType || CHOICES.FIREARM_TYPES[0])}</select></label>
       <label>Make<input type="text" name="Make" value="${esc(g?.Make)}"></label><label>Model<input type="text" name="Model" value="${esc(g?.Model)}"></label>
       <label>Calibre<input type="text" name="Calibre" value="${esc(g?.Calibre)}"></label>
-      <label>Purpose<select name="Purpose">${opt(["", ...(CHOICES.PURPOSES || [])], g?.Purpose || "")}</select></label></div>`,
+      <label>Purpose (the letter prints on the card)<select name="Purpose">${purposeOptions(g?.Purpose || "")}</select></label></div>`,
     onSubmit: async f => {
       if (!f.Title) { toast("The serial number is needed"); return false; }
       const ref = g?.ClientRef || newRef();

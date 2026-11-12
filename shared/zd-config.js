@@ -56,7 +56,14 @@ const ZD_BRAND = {
 const ZD_CHOICES = {
   LICENCE_TYPES: ["Shooter", "Collector", "Club member", "Security", "Dealer"],
   FIREARM_TYPES: ["Rifle", "Shotgun", "Handgun", "Other"],
-  PURPOSES:      ["Sport", "Hunting", "Security", "Collection", "Personal protection"],
+  // Purpose codes as printed on the back of the PNG Firearm Licence card.
+  // The card's front prints only the letter.
+  PURPOSES: [
+    ["A", "Club Activities"],    ["B", "Self Protection"],      ["C", "Veterinary"],
+    ["D", "Scientific"],         ["E", "Commercial Hunting"],   ["F", "Destruction Livestock"],
+    ["G", "Sporting Purposes"],  ["H", "Subsistence Hunting"],  ["I", "Dealer Firearms"],
+    ["J", "Dealer Ammunition"]
+  ],
   STATUSES:      ["Active", "Suspended", "Cancelled", "Expired"]
 };
 
