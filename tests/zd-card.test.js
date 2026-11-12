@@ -55,3 +55,22 @@ test("layouts keep everything on the card", () => {
     for (const r of L.rows) assert.ok(r.y < L.h - 20 && r.x >= 0, `${o} row ${r.keys}`);
   }
 });
+
+test("PNG Firearm Licence layout: photo and values stay inside the card's white panel", () => {
+  const T = C.LAYOUTS["PNG Firearm Licence"];
+  const panel = { x0: 35, y0: 78, x1: 962, y1: 578 };       // white area of the preprinted card (1012 x 638)
+  const p = T.photo;
+  assert.ok(p.x >= panel.x0 && p.y >= panel.y0 && p.x + p.w <= 390 && p.y + p.h <= 470, "photo clear of the SN label and the text column");
+  assert.ok(Math.abs(p.w / p.h - 0.75) < 0.01, "photo is 3 x 4");
+  for (const f of T.fields) {
+    assert.ok(f.x >= panel.x0 && f.x + f.max <= panel.x1 && f.y <= panel.y1 - 8, `${f.key} inside the panel`);
+    if (f.y < 223) assert.ok(f.x + f.max <= 786, `${f.key} clear of the hologram`);
+  }
+});
+
+test("long addresses wrap onto two lines at most", () => {
+  const ctx = { measureText: t => ({ width: t.length * 10 }) };
+  const lines = C.wrapLines(ctx, "Section 12, Allotment 4,\nKonedobu, National Capital District, Papua New Guinea", 300, 2);
+  assert.equal(lines.length, 2);
+  assert.ok(lines[0].length * 10 <= 300);
+});

@@ -99,7 +99,7 @@ Ensure-Field $L "ClientRef" "Text" -Indexed
 $F = "${Prefix}Firearms"
 Ensure-List $F "GenericList" "Firearms recorded on each licence"
 Set-TitleName $F "Serial no"
-foreach ($c in "LicenceNo","FirearmType","Make","Model","Calibre","Removed") { Ensure-Field $F $c "Text" }
+foreach ($c in "LicenceNo","FirearmType","Make","Model","Calibre","Purpose","Removed") { Ensure-Field $F $c "Text" }
 Ensure-Field $F "LicenceRef" "Text" -Indexed
 Ensure-Field $F "ClientRef" "Text" -Indexed
 
@@ -122,7 +122,7 @@ Pause-Step "STEP 3 of 4 - Create the picture libraries ${Prefix}LicencePhotos an
 Ensure-List "${Prefix}LicencePhotos" "DocumentLibrary" "Licence holders' photos (one folder per licence)"
 $B = "${Prefix}CardBackgrounds"
 Ensure-List $B "DocumentLibrary" "ID card background pictures. Best size 1012 x 638 px (or 638 x 1012 upright)"
-foreach ($c in "Orientation","TextColour","ShowHeader","Active","TextPanel") { Ensure-Field $B $c "Text" }
+foreach ($c in "Orientation","TextColour","ShowHeader","Active","TextPanel","Layout","Preprinted") { Ensure-Field $B $c "Text" }
 
 # ---------------------------------------------------------------------
 Pause-Step "STEP 4 of 4 - Create the SharePoint group '$OfficeGroup' (Edit rights) and add you"
