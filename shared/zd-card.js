@@ -104,16 +104,16 @@
       photo: { x: 62, y: 92, w: 276, h: 368 },          // blank area on the left, ~2 mm clear of "SN"
       size: 26,
       fields: [
-        { key: "LicenceNo",   x: 452, y: 147, max: 325, size: 32 },   // after "Lic No:", left of the hologram
+        { key: "LicenceNo",   x: 452, y: 150, max: 325, size: 48 },   // after "Lic No:", left of the hologram - large
         { key: "GivenNames",  x: 396, y: 258, max: 236 },             // under "First Name"
         { key: "Surname",     x: 642, y: 258, max: 300, upper: true },// under "Last Name"
         { key: "Address",     x: 396, y: 368, max: 545, size: 24, lines: 2, lineHeight: 30 },
         { key: "Make",        x: 396, y: 482, max: 268 },             // under "Make"
         { key: "FirearmType", x: 674, y: 482, max: 268 },             // under "Type"
-        { key: "SerialNo",    x: 82,  y: 501, max: 290, size: 24 },   // after "SN"
+        { key: "SerialNo",    x: 82,  y: 504, max: 300, size: 36 },   // after "SN" - large
         { key: "Registrar",   x: 156, y: 553, max: 220, size: 22 },   // after "Registrar"
         { key: "Calibre",     x: 396, y: 564, max: 190, size: 24 },   // under "Calibre"
-        { key: "Purpose",     x: 596, y: 564, max: 175, size: 24 },   // under "Purpose"
+        { key: "Purpose",     x: 600, y: 566, max: 175, size: 36 },   // under "Purpose" - the code letter, large
         { key: "ExpiryDate",  x: 779, y: 564, max: 170, size: 24 }    // under "Expiry Date"
       ]
     }
