@@ -90,7 +90,7 @@ Pause-Step "STEP 2 of 4 - Create the lists ${Prefix}Holders, ${Prefix}Licences, 
 $H = "${Prefix}Holders"
 Ensure-List $H "GenericList" "Licence holders - one row per person (ZD Licensing app)"
 Set-TitleName $H "Name"
-foreach ($c in "Surname","GivenNames","DateOfBirth","Sex","Phone","Email","PhotoItemId","PhotoDate",
+foreach ($c in "Surname","GivenNames","MiddleName","DateOfBirth","Sex","Phone","Email","PhotoItemId","PhotoDate",
                "FaceId","FaceStatus","FaceDate","CapturedBy") { Ensure-Field $H $c "Text" }
 foreach ($c in "Address","Notes","PhotoUrl","FaceNote") { Ensure-Field $H $c "Note" }
 Ensure-Field $H "ClientRef" "Text" -Indexed
@@ -104,7 +104,7 @@ foreach ($c in "Surname","GivenNames","DateOfBirth","Sex","Phone","Email","Licen
                "CardBackground","CardOrientation","LastPrinted","CapturedBy") { Ensure-Field $L $c "Text" }
 foreach ($c in "Address","Notes","PhotoUrl","FaceNote") { Ensure-Field $L $c "Note" }
 Ensure-Field $L "PrintCount" "Number"
-foreach ($c in "SerialNo","Make","Model","FirearmType","Calibre","Purpose") { Ensure-Field $L $c "Text" }
+foreach ($c in "SerialNo","Make","Model","FirearmType","Calibre","Purpose","Class") { Ensure-Field $L $c "Text" }
 Ensure-Field $L "HolderRef" "Text" -Indexed
 Ensure-Field $L "ClientRef" "Text" -Indexed
 
