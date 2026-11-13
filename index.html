@@ -6,7 +6,7 @@
 <title>ZD Licensing</title>
 <meta name="theme-color" content="#18222e">
 <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.28.1/lib/msal-browser.min.js"></script>
-<link rel="stylesheet" href="shared/zd.css?v=20261113b">
+<link rel="stylesheet" href="shared/zd.css?v=20261113d">
 </head>
 <body>
 <header id="hdr" hidden>
@@ -534,7 +534,7 @@ async function pageHolder() {
           <label>Email<input type="email" name="Email" value="${esc(h.Email)}" ${dis}></label>
           <label>Notes (not printed)<textarea name="Notes" ${dis}>${esc(h.Notes)}</textarea></label>
         </form>
-        <div class="card"><div class="bar" style="margin-bottom:8px"><h3 style="margin:0">Licences (one per firearm)</h3><span class="grow"></span>
+        <div class="card"><div class="bar"><h3 style="margin:0">Licences (one per firearm)</h3><span class="grow"></span>
             ${!ro && !isNew ? `<a class="btn primary sm" href="#/newlicence/${encodeURIComponent(ref)}">+ New licence</a>` : ""}</div>
           ${isNew ? `<p class="muted small">Save the holder first, then add a licence for each firearm.</p>` : ls.length ? `<table><thead><tr><th>Licence no</th><th>Firearm</th><th>Purpose</th><th>Expires</th><th>Status</th><th>Printed</th></tr></thead><tbody>
             ${ls.map(l => `<tr class="go" data-l="${esc(l.ClientRef)}"><td class="mono"><b>${esc(l.Title)}</b></td><td>${esc(gunText(l))}</td><td title="${esc(purposeName(l.Purpose))}">${esc(l.Purpose)}</td>
@@ -654,7 +654,7 @@ async function pageLicence() {
         ${!isNew ? `<div class="card"><h3>History</h3><div id="hist" class="small muted">${online() ? "Loading…" : "History shows when you're online."}</div></div>` : ""}
       </div>
       <div>
-        <div class="card"><div class="bar" style="margin-bottom:10px"><h3 style="margin:0">ID card</h3><span class="grow"></span>
+        <div class="card"><div class="bar"><h3 style="margin:0">ID card</h3><span class="grow"></span>
             <button class="btn sm" id="pngBtn" title="Save the card as a picture (e.g. for the card printer's own software)">Save as picture</button>
             ${ro ? "" : `<button class="btn primary sm" id="printBtn">Print card</button>`}</div>
           <canvas id="cardCv" class="cardview"></canvas>
@@ -868,7 +868,7 @@ async function pageBackgrounds() {
   const list = $("#bgList");
   for (const b of D.backgrounds) {
     const div = document.createElement("div"); div.className = "card";
-    div.innerHTML = `<div class="bar" style="margin-bottom:8px"><b>${esc(b.Title || b.name)}</b><span class="grow"></span>
+    div.innerHTML = `<div class="bar"><b>${esc(b.Title || b.name)}</b><span class="grow"></span>
         ${b.Layout && b.Layout !== "Standard" ? `<span class="tag info">${esc(b.Layout)}</span>` : ""}${b.Preprinted === "Yes" ? `<span class="tag">Preprinted</span>` : ""}<span class="tag ${b.Active === "No" ? "" : "ok"}">${b.Active === "No" ? "Hidden" : "In use"}</span><button class="btn sm" data-edit>Edit</button></div>
       <canvas class="cardview ${b.Orientation === "Portrait" ? "portrait" : ""}"></canvas>
       <p class="small muted" data-info style="margin:8px 0 0">${esc(b.name)}</p>`;
@@ -935,7 +935,7 @@ async function pageStaff() {
       : `<div class="empty">Nobody yet - add yourself as Admin first.</div>`}</div>
     <div class="card small"><b>Roles</b>: <b>Admin</b> - everything, including backgrounds and staff. <b>Officer</b> - add and change licences, take photos, print cards, find by face. <b>Viewer</b> - look only.<br>
       Everyone here also needs to be in the <b>${esc(BRAND.OFFICE_GROUP)}</b> SharePoint group (the group is what actually allows reading and changing the lists).</div>
-    <div class="card"><div class="bar" style="margin-bottom:8px"><h3 style="margin:0">Sign-in face records</h3><span class="grow"></span><button class="btn sm" id="loadFaces">Show</button></div>
+    <div class="card"><div class="bar"><h3 style="margin:0">Sign-in face records</h3><span class="grow"></span><button class="btn sm" id="loadFaces">Show</button></div>
       <div id="faces" class="small muted">Only administrators listed in the face service's ADMIN_USERS setting can see or reset these.</div></div>`;
   $("#addStaff").onclick = () => staffDialog(null);
   $$("[data-st]").forEach(b => b.onclick = () => staffDialog(D.staff.find(s => (s.ClientRef || s.id) === b.dataset.st)));

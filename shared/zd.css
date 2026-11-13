@@ -24,10 +24,15 @@ main{max-width:1280px;margin:0 auto;padding:20px}
 .banner{background:var(--warn-bg);color:var(--warn);border-radius:var(--r);padding:10px 14px;margin-bottom:14px;font-size:13px}
 .banner.err{background:var(--bad-bg);color:var(--bad)}.banner.info{background:var(--info-bg);color:var(--info)}
 h2{font-size:19px;margin:0}
-h3{font-size:14px;margin:4px 0 14px;padding:0 0 8px 10px;border-left:4px solid var(--accent);border-bottom:1px solid var(--line);
-   text-transform:uppercase;letter-spacing:.6px;color:var(--brand);line-height:1.2}
-.card form h3,.card>h3:not(:first-child),form.card h3:not(:first-of-type){margin-top:18px}
-.bar h3{border-bottom:0;padding-bottom:0;margin:0}
+h3{font-size:14px;margin:4px 0 14px;text-transform:uppercase;letter-spacing:.6px;color:var(--brand);line-height:1.2}
+/* Section headings: a dark band across the top of the panel */
+.card>h3:first-child,.card>.bar:first-child{margin:-16px -18px 16px;padding:11px 18px;background:var(--brand);color:#fff;
+  border-radius:calc(var(--r) - 1px) calc(var(--r) - 1px) 0 0}
+.card>.bar:first-child{padding:7px 12px 7px 18px;min-height:41px}
+.card>.bar:first-child h3{color:#fff;margin:0}
+.card>.bar:first-child .btn:not(.primary){color:var(--text)}
+.card>.bar:first-child .tag{border-color:transparent}
+.bar h3{margin:0}
 .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}.grow{flex:1}
 .card{background:var(--surface);border:1px solid #cfd5dd;border-radius:var(--r);box-shadow:var(--shadow);padding:16px 18px;margin-bottom:16px}
 .btn{background:var(--surface);border:1px solid var(--field);font-weight:500;border-radius:8px;padding:7px 12px;cursor:pointer;text-decoration:none;display:inline-block}
