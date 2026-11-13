@@ -138,8 +138,8 @@ const clean = r => Object.fromEntries(Object.entries(r).filter(([k]) => !k.start
 /* Put changes still waiting in the queue on screen, marked "waiting to send". */
 function mergeLocal(list, ref, fields, extra = {}) {
   const arr = arrFor(list); if (!arr) return null;
-  ref = fields.ClientRef || ref;                 // a converted row is shown under its new reference
-  let row = arr.find(r => r.ClientRef === ref);
+  const oldRef = ref; ref = fields.ClientRef || ref;   // a converted row is shown under its new reference
+  let row = arr.find(r => r.ClientRef === ref) || arr.find(r => r.ClientRef === oldRef);
   if (row) Object.assign(row, fields, extra, { _pending: true });
   else { row = { id: "local-" + ref, ...fields, ClientRef: ref, ...extra, _pending: true }; arr.push(row); }
   return row;
@@ -628,6 +628,7 @@ async function pageLicence() {
     <div class="bar"><a href="#/holder/${encodeURIComponent(h.ClientRef)}" class="btn sm">← ${esc(fullName(h))}</a>
       <h2>${isNew ? "New licence" : "Licence " + esc(l.Title)}</h2>
       ${!isNew ? `<span class="tag ${STATUS_TAG[statusOf(l)] || ""}">${statusOf(l)}</span>` : ""}${l._pending ? ` <span class="tag info">waiting to send</span>` : ""}<span class="grow"></span>
+      ${isAdmin() && !isNew ? `<button class="btn danger" id="delBtn" title="Remove this licence from the register (Admin only)">Delete licence</button>` : ""}
       ${ro ? "" : `<button class="btn primary" id="saveBtn">${isNew ? "Save licence" : "Save changes"}</button>`}</div>
     <div class="cols">
       <div>
@@ -744,7 +745,20 @@ async function pageLicence() {
     toast(online() ? "Saved" : "Saved on this device - it will be sent when you're online");
     if (isNew) location.hash = "#/licence/" + encodeURIComponent(ref); else route(true);
   };
-  if (!isNew && online()) loadHistory("LicenceRef", ref);
+  const delBtn = $("#delBtn");
+  if (delBtn) delBtn.onclick = async () => {
+    if (!online()) return toast("Deleting needs an internet connection");
+    if (!confirm(`Delete licence ${l.Title} (${fullName(h)})?\n\nIt is removed from the register for good. Use Status "Cancelled" instead if the licence should stay on record.`)) return;
+    try {
+      if (!String(l.id).startsWith("local-")) await deleteItem(LISTS.licences, l.id);
+      for (const op of (await qMine()).filter(o => o.list === LISTS.licences && o.ref === ref)) await qDel(op.qid);
+      await qCount();
+      D.licences = D.licences.filter(x => x !== l); saveSnapshot();
+      logActivity("Licence deleted", h, l, gunText(l));
+      S.dirty = false; toast("Licence deleted"); location.hash = "#/holder/" + encodeURIComponent(h.ClientRef);
+    } catch (e) { toast(isForbidden(e) ? "SharePoint refused this (no permission)" : e.message); }
+  };
+  if (!isNew && online()) loadHistory("LicenceRef", ref, l.Title);
 }
 
 /* Purpose codes: stored and printed as the letter ("B"), shown with its meaning ("B - Self Protection") */
@@ -780,15 +794,19 @@ async function queuePhoto(h, blob, withFace) {
     mergeLocal(LISTS.holders, h.ClientRef, { FaceStatus: "Waiting", FaceNote: "" });
   }
 }
-async function loadHistory(field, ref) {
+/* History. Entries from before "one licence per firearm" were recorded against the person's
+   reference (now the holder's) and the licence number, so those are looked up too. */
+async function loadHistory(field, ref, licNo) {
   const el = $("#hist");
+  const wants = field === "HolderRef" ? [["HolderRef", ref], ["LicenceRef", ref]] : [["LicenceRef", ref], ...(licNo ? [["LicenceNo", licNo]] : [])];
   try {
-    let rows;
-    if (DEMO) rows = (await listItems(LISTS.activity)).filter(r => r[field] === ref);
-    else {
-      rows = []; let url = `/sites/${siteId}/lists/${LISTS.activity}/items?$filter=fields/${field} eq '${ref}'&expand=fields&$top=200`;
+    let rows = [];
+    if (DEMO) rows = (await listItems(LISTS.activity)).filter(r => wants.some(([k, v]) => r[k] === v));
+    else for (const [k, v] of wants) {
+      let url = `/sites/${siteId}/lists/${LISTS.activity}/items?$filter=fields/${k} eq '${String(v).replace(/'/g, "''")}'&expand=fields&$top=200`;
       while (url) { const j = await graph(url, { headers: { Prefer: "HonorNonIndexedQueriesWarningMayFailRandomly" } }); rows.push(...j.value.map(i => i.fields)); url = j["@odata.nextLink"]; }
     }
+    const seen = new Set(); rows = rows.filter(r => { const k = r.ClientRef || r.id; if (seen.has(k)) return false; seen.add(k); return true; });
     rows.sort((a, b) => String(b.ActivityAt).localeCompare(String(a.ActivityAt)));
     if (el && el.isConnected) el.innerHTML = rows.length ? `<ul class="plain">${rows.slice(0, 50).map(r => `<li><span class="mono">${esc(fmtDate(String(r.ActivityAt).slice(0, 10)) + " " + String(r.ActivityAt).slice(11))}</span><span><b>${esc(r.Title)}</b>${field === "HolderRef" && r.LicenceNo ? " · " + esc(r.LicenceNo) : ""} · ${esc(r.ActivityBy)}${r.Details ? ` <span class="muted">· ${esc(r.Details)}</span>` : ""}</span></li>`).join("")}</ul>` : "Nothing recorded yet.";
   } catch (e) { if (el && el.isConnected) el.textContent = isMissingList(e) ? `The ${LISTS.activity} list isn't set up.` : "History couldn't be loaded."; }
@@ -803,7 +821,8 @@ async function loadHistory(field, ref) {
    ===================================================================== */
 async function convertOldRecords() {
   if (!canEdit()) return;
-  const old = D.licences.filter(l => !l.HolderRef && (l.Surname || l.GivenNames));
+  // never convert twice: skip a person who already has a converted licence
+  const old = D.licences.filter(l => !l.HolderRef && (l.Surname || l.GivenNames) && !D.licences.some(x => x !== l && x.HolderRef === l.ClientRef));
   for (const o of old) {
     const hf = {};
     ["Surname", "GivenNames", "DateOfBirth", "Sex", "Address", "Phone", "Email", "PhotoUrl", "PhotoItemId", "PhotoDate",
@@ -833,6 +852,26 @@ async function convertOldRecords() {
     }
   }
   if (old.length) toast(`${old.length} older record${old.length === 1 ? "" : "s"} converted to holder + licence`);
+  await repairConverted();
+}
+/* A converted licence whose firearm details didn't arrive: fill the empty ones from the old
+   firearms list (the old firearm rows point at the holder's reference). Only empty fields. */
+async function repairConverted() {
+  let n = 0;
+  for (const l of D.licences) {
+    if (!l.HolderRef || l.SerialNo) continue;
+    const used = new Set(D.licences.filter(x => x.HolderRef === l.HolderRef && x.SerialNo).map(x => norm(x.SerialNo)));
+    const g = D.firearms.find(f => f.LicenceRef === l.HolderRef && f.Removed !== "Yes" && !used.has(norm(f.Title)));
+    if (!g) continue;
+    const f = {};
+    [["SerialNo", g.Title], ["Make", g.Make], ["Model", g.Model], ["FirearmType", g.FirearmType], ["Calibre", g.Calibre], ["Purpose", g.Purpose]]
+      .forEach(([k, v]) => { if (v && !l[k]) f[k] = v; });
+    if (!Object.keys(f).length) continue;
+    mergeLocal(LISTS.licences, l.ClientRef, f);
+    await enqueue({ kind: "upsert", list: LISTS.licences, ref: l.ClientRef, fields: f, label: `Firearm details restored · ${l.Title}` });
+    n++;
+  }
+  if (n) toast(`Firearm details restored on ${n} licence${n === 1 ? "" : "s"}`);
 }
 
 /* =====================================================================
