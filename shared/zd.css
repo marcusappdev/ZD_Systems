@@ -1,10 +1,10 @@
 /* ZD Licensing - look and feel (same layout language as the MJE / CG Hubs) */
 :root{
-  --bg:#e4e8ed;--surface:#fff;--surface2:#f3f5f8;--text:#14181d;--muted:#46505c;--line:#c5ccd5;--field:#9aa5b3;
+  --bg:#d9dee5;--surface:#fff;--surface2:#f3f5f8;--text:#14181d;--muted:#46505c;--line:#c5ccd5;--field:#9aa5b3;
   --brand:#18222e;--accent:#a3121f;
   --ok:#1f8a4c;--warn:#b7791f;--bad:#c2410c;--info:#2563eb;
   --ok-bg:#e7f5ed;--warn-bg:#fdf3e1;--bad-bg:#fdece4;--info-bg:#e8effd;--grey-bg:#eef0f3;
-  --shadow:0 1px 2px rgba(16,24,40,.10),0 2px 6px rgba(16,24,40,.10);--r:10px;
+  --shadow:0 1px 3px rgba(16,24,40,.12),0 6px 18px rgba(16,24,40,.12);--r:10px;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif}
@@ -29,7 +29,7 @@ h3{font-size:14px;margin:4px 0 14px;padding:0 0 8px 10px;border-left:4px solid v
 .card form h3,.card>h3:not(:first-child),form.card h3:not(:first-of-type){margin-top:18px}
 .bar h3{border-bottom:0;padding-bottom:0;margin:0}
 .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}.grow{flex:1}
-.card{background:var(--surface);border:1px solid var(--line);border-top:3px solid var(--brand);border-radius:var(--r);box-shadow:var(--shadow);padding:16px 18px;margin-bottom:16px}
+.card{background:var(--surface);border:1px solid #cfd5dd;border-radius:var(--r);box-shadow:var(--shadow);padding:16px 18px;margin-bottom:16px}
 .btn{background:var(--surface);border:1px solid var(--field);font-weight:500;border-radius:8px;padding:7px 12px;cursor:pointer;text-decoration:none;display:inline-block}
 .btn:hover{background:var(--surface2)}.btn:disabled{opacity:.5;cursor:default}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}

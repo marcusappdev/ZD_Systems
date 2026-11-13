@@ -6,7 +6,7 @@
 <title>ZD Licensing</title>
 <meta name="theme-color" content="#18222e">
 <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.28.1/lib/msal-browser.min.js"></script>
-<link rel="stylesheet" href="shared/zd.css?v=20261113">
+<link rel="stylesheet" href="shared/zd.css?v=20261113b">
 </head>
 <body>
 <header id="hdr" hidden>
@@ -637,18 +637,17 @@ async function pageLicence() {
             <div class="small muted" style="margin:4px 0 8px">Born ${fmtDate(h.DateOfBirth) || "—"}${h.Phone ? " · " + esc(h.Phone) : ""}</div>
             <div class="small" style="white-space:pre-line">${esc(h.Address)}</div>
             <div style="margin-top:10px">${faceTag(h)} <a class="btn sm" href="#/holder/${encodeURIComponent(h.ClientRef)}">Open holder</a></div></div></div></div>
-        <form class="card" id="mainForm" autocomplete="off"><h3>Licence</h3>
+        <form class="card" id="mainForm" autocomplete="off"><h3>Licence &amp; firearm</h3>
           <div class="grid3"><label>Licence no *<input type="text" name="Title" value="${esc(l.Title)}" class="mono" ${dis}></label>
-            <label>Licence type *<select name="LicenceType" ${dis}>${opt(CHOICES.LICENCE_TYPES, l.LicenceType)}</select></label>
-            <label>Status<select name="LicenceStatus" ${dis}>${opt(CHOICES.STATUSES, l.LicenceStatus || "Active")}</select></label></div>
-          <div class="grid3"><label>Purpose * (the letter prints)<select name="Purpose" ${dis}>${purposeOptions(l.Purpose || "")}</select></label>
-            <label>Issued *<input type="date" name="IssueDate" value="${esc(String(l.IssueDate || "").slice(0, 10))}" ${dis}></label>
-            <label>Expires *<input type="date" name="ExpiryDate" value="${esc(String(l.ExpiryDate || "").slice(0, 10))}" ${dis}></label></div>
-          <h3>Firearm</h3>
-          <div class="grid3"><label>Serial no (SN) *<input type="text" name="SerialNo" value="${esc(l.SerialNo)}" class="mono" ${dis}></label>
+            <label>Serial no (SN) *<input type="text" name="SerialNo" value="${esc(l.SerialNo)}" class="mono" ${dis}></label>
+            <label>Purpose * (the letter prints)<select name="Purpose" ${dis}>${purposeOptions(l.Purpose || "")}</select></label></div>
+          <div class="grid3"><label>Make<input type="text" name="Make" value="${esc(l.Make)}" ${dis}></label>
             <label>Type<select name="FirearmType" ${dis}>${opt(["", ...CHOICES.FIREARM_TYPES], l.FirearmType || "")}</select></label>
             <label>Calibre<input type="text" name="Calibre" value="${esc(l.Calibre)}" ${dis}></label></div>
-          <div class="grid2"><label>Make<input type="text" name="Make" value="${esc(l.Make)}" ${dis}></label>
+          <div class="grid3"><label>Issued *<input type="date" name="IssueDate" value="${esc(String(l.IssueDate || "").slice(0, 10))}" ${dis}></label>
+            <label>Expires *<input type="date" name="ExpiryDate" value="${esc(String(l.ExpiryDate || "").slice(0, 10))}" ${dis}></label>
+            <label>Status<select name="LicenceStatus" ${dis}>${opt(CHOICES.STATUSES, l.LicenceStatus || "Active")}</select></label></div>
+          <div class="grid2"><label>Licence type *<select name="LicenceType" ${dis}>${opt(CHOICES.LICENCE_TYPES, l.LicenceType)}</select></label>
             <label>Model (not printed)<input type="text" name="Model" value="${esc(l.Model)}" ${dis}></label></div>
           <label>Notes (not printed)<textarea name="Notes" ${dis}>${esc(l.Notes)}</textarea></label>
         </form>
