@@ -6,7 +6,7 @@
 <title>ZD Licensing</title>
 <meta name="theme-color" content="#18222e">
 <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.28.1/lib/msal-browser.min.js"></script>
-<link rel="stylesheet" href="shared/zd.css?v=20261113">
+<link rel="stylesheet" href="shared/zd.css?v=20261113d">
 </head>
 <body>
 <header id="hdr" hidden>
@@ -62,14 +62,15 @@
    ===================================================================== */
 const ROLES = ["Admin", "Officer", "Viewer"];
 const S = { role: "", roleSource: "", route: "", param: "", filter: "all", q: "", dirty: false, card: null, offlinePass: false, missing: [], loadErr: null };
-let D = { licences: [], firearms: [], staff: [], backgrounds: [], at: "", offlineCopy: false };
+let D = { holders: [], licences: [], firearms: [], staff: [], backgrounds: [], at: "", offlineCopy: false };
 const canEdit = () => S.role === "Admin" || S.role === "Officer";
 const isAdmin = () => S.role === "Admin";
-const SAMPLE = { Title: "ZD-000123", GivenNames: "Sample", Surname: "Holder", LicenceType: "Shooter", DateOfBirth: "1985-06-14", Sex: "M", IssueDate: today(), ExpiryDate: addYears(today(), RULES.LICENCE_YEARS),
-  Address: "Section 12, Allotment 4, Konedobu, National Capital District" };
-const SAMPLE_GUN = { Title: "4471-22983-RB", Make: "Remington", FirearmType: "Shotgun", Calibre: "12 gauge", Purpose: "B" };
-const arrFor = list => list === LISTS.licences ? D.licences : list === LISTS.firearms ? D.firearms : list === LISTS.staff ? D.staff : null;
+const SAMPLE_HOLDER = { GivenNames: "Sample", Surname: "Holder", DateOfBirth: "1985-06-14", Sex: "M", Address: "Section 12, Allotment 4, Konedobu, National Capital District" };
+const SAMPLE_LIC = { Title: "ZD-000123", LicenceType: "Shooter", IssueDate: today(), ExpiryDate: addYears(today(), RULES.LICENCE_YEARS),
+  SerialNo: "4471-22983-RB", Make: "Remington", FirearmType: "Shotgun", Calibre: "12 gauge", Purpose: "B" };
+const arrFor = list => list === LISTS.holders ? D.holders : list === LISTS.licences ? D.licences : list === LISTS.firearms ? D.firearms : list === LISTS.staff ? D.staff : null;
 const lic = ref => D.licences.find(l => l.ClientRef === ref);
+const holder = ref => ref ? D.holders.find(h => h.ClientRef === ref) : null;
 const fullName = l => [l.GivenNames, String(l.Surname || "").toUpperCase()].filter(Boolean).join(" ");
 const norm = s => String(s || "").trim().toUpperCase();
 
@@ -89,6 +90,7 @@ const norm = s => String(s || "").trim().toUpperCase();
   if (!(await faceGate())) return;
   $("#hdr").hidden = false;
   window.addEventListener("hashchange", route);
+  await convertOldRecords();
   route();
   flushSoon(800);
 })();
@@ -113,20 +115,21 @@ async function loadData() {
   try {
     if (!online()) throw Object.assign(new Error("offline"), { kind: "offline" });
     if (!DEMO) await getSite();
-    const [licences, firearms, staff, backgrounds] = await Promise.all([
-      soft(listItems(LISTS.licences), LISTS.licences), soft(listItems(LISTS.firearms), LISTS.firearms),
+    const [holders, licences, firearms, staff, backgrounds] = await Promise.all([
+      soft(listItems(LISTS.holders), LISTS.holders), soft(listItems(LISTS.licences), LISTS.licences), listItems(LISTS.firearms).catch(() => []),
       soft(listItems(LISTS.staff), LISTS.staff), soft(libraryFiles(LISTS.backgrounds), LISTS.backgrounds)]);
-    D = { licences, firearms, staff, backgrounds, at: new Date().toISOString(), offlineCopy: false };
+    D = { holders, licences, firearms, staff, backgrounds, at: new Date().toISOString(), offlineCopy: false };
     await saveSnapshot();
     cacheBackgrounds();
   } catch (e) {
     if (!isNetErr(e)) S.loadErr = e;
     const snap = await kvGet("snap").catch(() => null);
-    if (snap && (isNetErr(e) || !isForbidden(e))) D = { ...snap, offlineCopy: true };
+    if (snap && (isNetErr(e) || !isForbidden(e))) D = { holders: [], firearms: [], ...snap, offlineCopy: true };
   }
   await applyQueue();
 }
 const saveSnapshot = () => kvSet("snap", {
+  holders: D.holders.filter(h => !String(h.id).startsWith("local-")).map(clean),
   licences: D.licences.filter(l => !l._pending || !String(l.id).startsWith("local-")).map(clean),
   firearms: D.firearms.filter(f => !String(f.id).startsWith("local-")).map(clean),
   staff: D.staff.map(clean), backgrounds: D.backgrounds, at: D.at }).catch(() => {});
@@ -135,6 +138,7 @@ const clean = r => Object.fromEntries(Object.entries(r).filter(([k]) => !k.start
 /* Put changes still waiting in the queue on screen, marked "waiting to send". */
 function mergeLocal(list, ref, fields, extra = {}) {
   const arr = arrFor(list); if (!arr) return null;
+  ref = fields.ClientRef || ref;                 // a converted row is shown under its new reference
   let row = arr.find(r => r.ClientRef === ref);
   if (row) Object.assign(row, fields, extra, { _pending: true });
   else { row = { id: "local-" + ref, ...fields, ClientRef: ref, ...extra, _pending: true }; arr.push(row); }
@@ -144,13 +148,15 @@ async function applyQueue(onlyRef) {
   for (const op of await qMine()) {
     if (onlyRef && op.ref !== onlyRef) continue;
     if (op.kind === "upsert") mergeLocal(op.list, op.ref, op.fields, op.file ? { _localKey: op.file.localKey } : {});
-    if (op.kind === "face") mergeLocal(LISTS.licences, op.ref, { FaceStatus: "Waiting" });
+    if (op.kind === "face") mergeLocal(LISTS.holders, op.ref, { FaceStatus: "Waiting" });
   }
   await qCount();
 }
 SENT_HOOKS.push(async (op, saved) => {
-  const arr = arrFor(op.kind === "face" ? LISTS.licences : op.list); if (!arr) return;   // a face op returns the updated licence
-  const i = arr.findIndex(r => r.ClientRef === op.ref);
+  const arr = arrFor(op.kind === "face" ? LISTS.holders : op.list); if (!arr) return;   // a face op returns the updated holder
+  // (a converted licence is found by its old ref and comes back with its new one)
+  const newRef_ = saved.ClientRef || op.ref;
+  const i = arr.findIndex(r => r.ClientRef === op.ref || r.ClientRef === newRef_);
   if (i >= 0) arr[i] = { ...saved }; else arr.push({ ...saved });
   if (op.file?.localKey) await kvDel(op.file.localKey).catch(() => {});
   await applyQueue(op.ref);                                          // anything still waiting for the same row
@@ -171,6 +177,7 @@ async function bgImage(b) {
   if (!blob && online()) { try { blob = await downloadFile(LISTS.backgrounds, b.fileId); await kvSet("bg:" + b.fileId, blob); } catch {} }
   return blob ? (IMGS["bg:" + b.fileId] = await blobImage(blob)) : null;
 }
+/* Photos belong to the holder */
 async function photoBlob(l) {
   if (!l) return null;
   if (l._localKey) { const b = await kvGet(l._localKey); if (b) return b; }
@@ -240,7 +247,7 @@ async function faceGate() {
   });
   if (!note) { signOut(); return false; }
   setFacePass(note);
-  logActivity("Signed in", null, "Face check: " + note);
+  logActivity("Signed in", null, null, "Face check: " + note);
   return true;
 }
 
@@ -366,18 +373,18 @@ async function takeLicencePhoto() {
 }
 
 /* ---------------- activity log ---------------- */
-function logActivity(action, l, details = "") {
-  return enqueue({ kind: "upsert", list: LISTS.activity, ref: newRef(), label: action + (l ? " · " + l.Title : ""),
-    fields: { Title: action, LicenceRef: l?.ClientRef || "", LicenceNo: l?.Title || "", ActivityBy: me(), ActivityAt: `${today()} ${hhmm(new Date())}`, Details: details } });
+function logActivity(action, h, l, details = "") {
+  return enqueue({ kind: "upsert", list: LISTS.activity, ref: newRef(), label: action + (l ? " · " + l.Title : h ? " · " + fullName(h) : ""),
+    fields: { Title: action, HolderRef: h?.ClientRef || "", LicenceRef: l?.ClientRef || "", LicenceNo: l?.Title || "", ActivityBy: me(), ActivityAt: `${today()} ${hhmm(new Date())}`, Details: details || "" } });
 }
 
 /* ---------------- header, routing ---------------- */
 const NAV = [
-  ["", "Register", () => true], ["new", "New licence", canEdit], ["face", "Find by face", canEdit],
+  ["", "Register", () => true], ["holders", "Holders", () => true], ["newholder", "New holder", canEdit], ["face", "Find by face", canEdit],
   ["backgrounds", "Card backgrounds", isAdmin], ["staff", "Staff", isAdmin], ["settings", "Settings", () => true]];
 function renderNav() {
   $("#logo").innerHTML = `${esc(BRAND.SHORT)} Licensing${DEMO ? "<small>demo</small>" : ""}`;
-  const cur = S.route === "licence" ? "" : S.route;
+  const cur = { licence: "", newlicence: "holders", holder: "holders" }[S.route] ?? S.route;
   $("#nav").innerHTML = NAV.filter(n => n[2]()).map(([k, label]) => `<a href="#/${k}" class="${(k || "register") === (cur || "register") ? "on" : ""}">${label}</a>`).join("");
   renderWho();
 }
@@ -394,25 +401,26 @@ window.addEventListener("offline", () => { renderWho(); });
 
 function route(quiet) {
   const parts = location.hash.replace(/^#\/?/, "").split("/");
-  const next = parts[0] === "licence" ? "licence" : parts[0] || "";
+  const next = parts[0] || "";
   const param = decodeURIComponent(parts[1] || "");
   if (!quiet && S.dirty && (next !== S.route || param !== S.param) && !confirm("You have changes that aren't saved. Leave without saving?")) {
-    history.replaceState(null, "", S.route === "licence" ? "#/licence/" + S.param : "#/" + S.route); return;
+    history.replaceState(null, "", "#/" + S.route + (S.param ? "/" + encodeURIComponent(S.param) : "")); return;
   }
   // A quiet refresh of the same licence keeps whatever was typed but not saved yet
-  const keep = quiet && next === S.route && param === S.param && S.dirty && $("#licForm")
-    ? [...new FormData($("#licForm"))] : null;
+  const keep = quiet && next === S.route && param === S.param && S.dirty && $("#mainForm")
+    ? [...new FormData($("#mainForm"))] : null;
   if (!quiet || next !== S.route || param !== S.param) S.dirty = false;
   S.route = next; S.param = param;
   if (keep) setTimeout(() => {
-    const f = $("#licForm"); if (!f) return;
+    const f = $("#mainForm"); if (!f) return;
     keep.forEach(([k, v]) => { if (f.elements[k]) f.elements[k].value = v; });
     S.dirty = true; f.dispatchEvent(new Event("input"));
   });
-  const allowed = { "": true, licence: true, new: canEdit(), face: canEdit(), backgrounds: isAdmin(), staff: isAdmin(), settings: true };
+  const allowed = { "": true, holders: true, holder: true, licence: true, newholder: canEdit(), newlicence: canEdit(), face: canEdit(), backgrounds: isAdmin(), staff: isAdmin(), settings: true };
   if (!allowed[next]) { location.hash = "#/"; return; }
   renderNav();
-  ({ "": pageRegister, licence: pageLicence, new: pageLicence, face: pageFace, backgrounds: pageBackgrounds, staff: pageStaff, settings: pageSettings })[next]();
+  ({ "": pageRegister, holders: pageHolders, holder: pageHolder, newholder: pageHolder, licence: pageLicence, newlicence: pageLicence,
+     face: pageFace, backgrounds: pageBackgrounds, staff: pageStaff, settings: pageSettings })[next]();
 }
 function banners() {
   let h = "";
@@ -425,7 +433,7 @@ function banners() {
 }
 
 /* =====================================================================
-   REGISTER
+   REGISTER - one row per licence (= one firearm)
    ===================================================================== */
 function statusOf(l) {
   const t = today(), s = l.LicenceStatus || "Active";
@@ -435,105 +443,218 @@ function statusOf(l) {
   return "Active";
 }
 const STATUS_TAG = { Active: "ok", Expiring: "warn", Expired: "bad", Suspended: "bad", Cancelled: "bad" };
-const faceTag = l => ({ Enrolled: `<span class="tag ok">Face on file</span>`, Check: `<span class="tag bad" title="${esc(l.FaceNote)}">Face: check</span>`,
-  Failed: `<span class="tag warn" title="${esc(l.FaceNote)}">Face failed</span>`, Waiting: `<span class="tag info">Face waiting</span>` })[l.FaceStatus] || `<span class="tag">No face</span>`;
+/* "Same face as holder(s): ab12cd (99%)" -> with the holders' names */
+const faceNote = h => String(h?.FaceNote || "").replace(/\b([A-Za-z0-9]{12,40})\b/g, r => { const o = holder(r); return o ? fullName(o) : r; });
+const faceTag = h => ({ Enrolled: `<span class="tag ok">Face on file</span>`, Check: `<span class="tag bad" title="${esc(faceNote(h))}">Face: check</span>`,
+  Failed: `<span class="tag warn" title="${esc(faceNote(h))}">Face failed</span>`, Waiting: `<span class="tag info">Face waiting</span>` })[h?.FaceStatus] || `<span class="tag">No face</span>`;
+const gunText = l => [l.SerialNo, [l.Make, l.Model].filter(Boolean).join(" "), l.FirearmType].filter(Boolean).join(" · ");
 const FILTERS = [["all", "All"], ["Active", "Active"], ["Expiring", "Expiring (60 days)"], ["Expired", "Expired"], ["stopped", "Suspended / cancelled"], ["face", "Face to check"], ["pending", "Waiting to send"]];
 function pageRegister() {
   const q = S.q.trim().toLowerCase();
-  const pass = l => {
-    const st = statusOf(l);
-    if (S.filter === "stopped" ? !["Suspended", "Cancelled"].includes(st) : S.filter === "face" ? !["Check", "Failed"].includes(l.FaceStatus)
-      : S.filter === "pending" ? !l._pending : S.filter !== "all" && st !== S.filter) return false;
-    return !q || [l.Title, l.Surname, l.GivenNames, l.LicenceType, l.Phone].some(v => String(v || "").toLowerCase().includes(q));
+  const pass = (l, f = S.filter) => {
+    const st = statusOf(l), h = holder(l.HolderRef) || {};
+    if (f === "stopped" ? !["Suspended", "Cancelled"].includes(st) : f === "face" ? !["Check", "Failed"].includes(h.FaceStatus)
+      : f === "pending" ? !(l._pending || h._pending) : f !== "all" && st !== f) return false;
+    return !q || [l.Title, h.Surname, h.GivenNames, h.Phone, l.SerialNo, l.Make, l.LicenceType].some(v => String(v || "").toLowerCase().includes(q));
   };
-  const rows = D.licences.filter(pass).sort((a, b) => String(a.Surname || "").localeCompare(String(b.Surname || "")) || String(a.GivenNames || "").localeCompare(String(b.GivenNames || "")));
-  const count = k => D.licences.filter(l => { const o = S.filter; S.filter = k; const r = pass(l); S.filter = o; return r; }).length;
+  const rows = D.licences.filter(l => pass(l)).sort((a, b) => {
+    const ha = holder(a.HolderRef) || {}, hb = holder(b.HolderRef) || {};
+    return String(ha.Surname || "").localeCompare(String(hb.Surname || "")) || String(ha.GivenNames || "").localeCompare(String(hb.GivenNames || "")) || String(a.Title).localeCompare(String(b.Title));
+  });
   $("#main").innerHTML = banners() + `
-    <div class="bar"><h2>Licence register</h2><span class="muted">${D.licences.length} licence${D.licences.length === 1 ? "" : "s"}</span><span class="grow"></span>
-      <input type="search" id="q" placeholder="Search name, licence no, phone…" value="${esc(S.q)}" style="max-width:300px">
-      ${canEdit() ? `<a class="btn primary" href="#/new">+ New licence</a>` : ""}</div>
-    <div class="chips" style="margin-bottom:12px">${FILTERS.map(([k, t]) => `<button class="chip ${S.filter === k ? "on" : ""}" data-f="${k}">${t} <span class="muted">${count(k)}</span></button>`).join("")}</div>
-    <div class="card" style="padding:0;overflow:auto">${rows.length ? `<table><thead><tr><th></th><th>Licence no</th><th>Name</th><th>Type</th><th>Date of birth</th><th>Expires</th><th>Status</th><th>Face</th><th>Card printed</th></tr></thead><tbody>
-      ${rows.slice(0, 500).map(l => { const st = statusOf(l); return `<tr class="go" data-ref="${esc(l.ClientRef)}">
-        <td><img class="thumb" data-photo="${esc(l.ClientRef)}" alt=""></td><td class="mono">${esc(l.Title)}</td><td><b>${esc(fullName(l))}</b></td>
-        <td>${esc(l.LicenceType)}</td><td>${fmtDate(l.DateOfBirth)}</td><td>${fmtDate(l.ExpiryDate)}</td>
+    <div class="bar"><h2>Licence register</h2><span class="muted">${D.licences.length} licence${D.licences.length === 1 ? "" : "s"} · ${D.holders.length} holder${D.holders.length === 1 ? "" : "s"}</span><span class="grow"></span>
+      <input type="search" id="q" placeholder="Search name, licence no, serial no, phone…" value="${esc(S.q)}" style="max-width:320px">
+      ${canEdit() ? `<a class="btn primary" href="#/holders" title="Pick the holder (or add a new one), then New licence">+ New licence</a>` : ""}</div>
+    <div class="chips" style="margin-bottom:12px">${FILTERS.map(([k, t]) => `<button class="chip ${S.filter === k ? "on" : ""}" data-f="${k}">${t} <span class="muted">${D.licences.filter(l => pass(l, k)).length}</span></button>`).join("")}</div>
+    <div class="card" style="padding:0;overflow:auto">${rows.length ? `<table><thead><tr><th></th><th>Licence no</th><th>Holder</th><th>Firearm</th><th>Purpose</th><th>Expires</th><th>Status</th><th>Face</th><th>Card printed</th></tr></thead><tbody>
+      ${rows.slice(0, 500).map(l => { const st = statusOf(l), h = holder(l.HolderRef) || {}; return `<tr class="go" data-ref="${esc(l.ClientRef)}">
+        <td><img class="thumb" data-photo="${esc(h.ClientRef || "")}" alt=""></td><td class="mono"><b>${esc(l.Title)}</b></td><td><b>${esc(fullName(h))}</b></td>
+        <td>${esc(gunText(l))}</td><td title="${esc(purposeName(l.Purpose))}">${esc(l.Purpose)}</td><td>${fmtDate(l.ExpiryDate)}</td>
         <td><span class="tag ${STATUS_TAG[st] || ""}">${st}</span>${l._pending ? ` <span class="tag info">waiting to send</span>` : ""}</td>
-        <td>${faceTag(l)}</td><td>${l.LastPrinted ? fmtDate(l.LastPrinted) + (num(l.PrintCount) > 1 ? ` <span class="muted">(${num(l.PrintCount)}×)</span>` : "") : `<span class="muted">—</span>`}</td></tr>`; }).join("")}
+        <td>${faceTag(h)}</td><td>${l.LastPrinted ? fmtDate(l.LastPrinted) + (num(l.PrintCount) > 1 ? ` <span class="muted">(${num(l.PrintCount)}×)</span>` : "") : `<span class="muted">—</span>`}</td></tr>`; }).join("")}
       </tbody></table>${rows.length > 500 ? `<p class="muted small" style="padding:8px">Showing the first 500 - search to narrow down.</p>` : ""}`
-      : `<div class="empty">${D.licences.length ? "Nothing matches." : "No licences yet." + (canEdit() ? ` <a href="#/new">Add the first one</a>.` : "")}</div>`}</div>`;
+      : `<div class="empty">${D.licences.length ? "Nothing matches." : "No licences yet." + (canEdit() ? ` Start by adding the <a href="#/newholder">licence holder</a>.` : "")}</div>`}</div>`;
   $("#q").oninput = e => { S.q = e.target.value; const pos = e.target.selectionStart; pageRegister(); const n = $("#q"); n.focus(); n.setSelectionRange(pos, pos); };
   $$("[data-f]").forEach(b => b.onclick = () => { S.filter = b.dataset.f; pageRegister(); });
   $$("tr[data-ref]").forEach(tr => tr.onclick = () => location.hash = "#/licence/" + encodeURIComponent(tr.dataset.ref));
-  $$("img[data-photo]").forEach(async img => { const u = await photoUrl(lic(img.dataset.photo) || {}); if (u) img.src = u; });
+  fillThumbs();
 }
 const num = v => (v === "" || v == null || isNaN(+v)) ? 0 : +v;
+function fillThumbs() { $$("img[data-photo]").forEach(async img => { const u = await photoUrl(holder(img.dataset.photo) || {}); if (u) img.src = u; }); }
 
 /* =====================================================================
-   LICENCE PAGE (new or existing): details, photo, card, firearms, history
+   HOLDERS - the people; each has one licence per firearm
    ===================================================================== */
-let DRAFT_PHOTO = null;                 // photo taken for a licence that isn't saved yet
-let PREVIEW_T = null;
-async function pageLicence() {
-  const isNew = S.route === "new";
+function pageHolders() {
+  const q = (S.hq || "").trim().toLowerCase();
+  const rows = D.holders.filter(h => !q || [h.Surname, h.GivenNames, h.Phone, h.Email].some(v => String(v || "").toLowerCase().includes(q))
+      || D.licences.some(l => l.HolderRef === h.ClientRef && [l.Title, l.SerialNo].some(v => String(v || "").toLowerCase().includes(q))))
+    .sort((a, b) => String(a.Surname || "").localeCompare(String(b.Surname || "")) || String(a.GivenNames || "").localeCompare(String(b.GivenNames || "")));
+  $("#main").innerHTML = banners() + `
+    <div class="bar"><h2>Licence holders</h2><span class="muted">${D.holders.length}</span><span class="grow"></span>
+      <input type="search" id="hq" placeholder="Search name, phone, licence or serial no…" value="${esc(S.hq || "")}" style="max-width:320px">
+      ${canEdit() ? `<a class="btn primary" href="#/newholder">+ New holder</a>` : ""}</div>
+    ${canEdit() ? `<div class="banner info">To add a licence: open the holder (or add a new one), then click <b>+ New licence</b>. Each firearm has its own licence.</div>` : ""}
+    <div class="card" style="padding:0;overflow:auto">${rows.length ? `<table><thead><tr><th></th><th>Name</th><th>Date of birth</th><th>Phone</th><th>Licences</th><th>Face</th></tr></thead><tbody>
+      ${rows.slice(0, 500).map(h => { const ls = D.licences.filter(l => l.HolderRef === h.ClientRef); return `<tr class="go" data-h="${esc(h.ClientRef)}">
+        <td><img class="thumb" data-photo="${esc(h.ClientRef)}" alt=""></td><td><b>${esc(fullName(h))}</b>${h._pending ? ` <span class="tag info">waiting to send</span>` : ""}</td>
+        <td>${fmtDate(h.DateOfBirth)}</td><td>${esc(h.Phone)}</td><td>${ls.length ? ls.map(l => `<span class="tag ${STATUS_TAG[statusOf(l)] || ""}">${esc(l.Title)}</span>`).join(" ") : `<span class="muted">none</span>`}</td><td>${faceTag(h)}</td></tr>`; }).join("")}
+      </tbody></table>` : `<div class="empty">${D.holders.length ? "Nothing matches." : "No holders yet."}</div>`}</div>`;
+  $("#hq").oninput = e => { S.hq = e.target.value; const pos = e.target.selectionStart; pageHolders(); const n = $("#hq"); n.focus(); n.setSelectionRange(pos, pos); };
+  $$("tr[data-h]").forEach(tr => tr.onclick = () => location.hash = "#/holder/" + encodeURIComponent(tr.dataset.h));
+  fillThumbs();
+}
+
+/* =====================================================================
+   HOLDER PAGE (new or existing): details, photo + face, their licences
+   ===================================================================== */
+let DRAFT_PHOTO = null;                 // photo taken for a holder that isn't saved yet
+async function pageHolder() {
+  const isNew = S.route === "newholder";
   const ref = isNew ? (S.newRef ||= newRef()) : S.param;
   if (!isNew) S.newRef = null;
-  const l = isNew ? { ClientRef: ref, LicenceStatus: "Active", IssueDate: today(), ExpiryDate: addYears(today(), RULES.LICENCE_YEARS), LicenceType: CHOICES.LICENCE_TYPES[0] || "" } : lic(ref);
-  if (!l) { $("#main").innerHTML = banners() + `<div class="card empty">That licence isn't in the register${D.offlineCopy ? " copy on this device" : ""}. <a href="#/">Back to the register</a></div>`; return; }
+  const h = isNew ? { ClientRef: ref } : holder(ref);
+  if (!h) { $("#main").innerHTML = banners() + `<div class="card empty">That holder isn't in the register${D.offlineCopy ? " copy on this device" : ""}. <a href="#/holders">Back to holders</a></div>`; return; }
   if (isNew && !S.dirty) DRAFT_PHOTO = null;
-  const ro = !canEdit();
-  const dis = ro ? "disabled" : "";
-  const opt = (arr, v) => [...new Set([...(arr || []), ...(v ? [v] : [])])].map(o => `<option ${o === v ? "selected" : ""}>${esc(o)}</option>`).join("");
-  const guns = D.firearms.filter(f => f.LicenceRef === ref && f.Removed !== "Yes");
-  // card design: saved choice, else the first active background
-  const actBg = D.backgrounds.filter(b => b.Active !== "No" && b.Active !== false);
-  if (!S.card || S.card.ref !== ref) {
-    const saved = D.backgrounds.find(b => b.name === l.CardBackground);
-    S.card = saved ? { ref, bg: saved.fileId, orientation: saved.Orientation || "Landscape" }
-      : l.ClientRef && !isNew && l.CardOrientation ? { ref, bg: "", orientation: l.CardOrientation }
-      : actBg[0] ? { ref, bg: actBg[0].fileId, orientation: actBg[0].Orientation || "Landscape" } : { ref, bg: "", orientation: "Landscape" };
-  }
+  const ro = !canEdit(), dis = ro ? "disabled" : "";
+  const ls = D.licences.filter(l => l.HolderRef === ref).sort((a, b) => String(a.Title).localeCompare(String(b.Title)));
   $("#main").innerHTML = banners() + `
-    <div class="bar"><a href="#/" class="btn sm">← Register</a><h2>${isNew ? "New licence" : esc(l.Title) + " · " + esc(fullName(l))}</h2>
-      ${!isNew ? `<span class="tag ${STATUS_TAG[statusOf(l)] || ""}">${statusOf(l)}</span> ${faceTag(l)}` : ""}${l._pending ? ` <span class="tag info">waiting to send</span>` : ""}<span class="grow"></span>
-      ${ro ? "" : `<button class="btn primary" id="saveBtn">${isNew ? "Save licence" : "Save changes"}</button>`}</div>
+    <div class="bar"><a href="#/holders" class="btn sm">← Holders</a><h2>${isNew ? "New licence holder" : esc(fullName(h))}</h2>
+      ${!isNew ? faceTag(h) : ""}${h._pending ? ` <span class="tag info">waiting to send</span>` : ""}<span class="grow"></span>
+      ${ro ? "" : `<button class="btn primary" id="saveBtn">${isNew ? "Save holder" : "Save changes"}</button>`}</div>
     <div class="cols">
       <div>
-        <form class="card" id="licForm" autocomplete="off"><h3>Licence holder</h3>
-          <div class="grid2"><label>Surname *<input type="text" name="Surname" value="${esc(l.Surname)}" ${dis}></label>
-            <label>Given names *<input type="text" name="GivenNames" value="${esc(l.GivenNames)}" ${dis}></label></div>
-          <div class="grid3"><label>Date of birth *<input type="date" name="DateOfBirth" value="${esc(String(l.DateOfBirth || "").slice(0, 10))}" ${dis}></label>
-            <label>Sex<select name="Sex" ${dis}>${opt(["", "M", "F", "X"], l.Sex || "")}</select></label>
-            <label>Phone<input type="text" name="Phone" value="${esc(l.Phone)}" ${dis}></label></div>
-          <label>Address<textarea name="Address" ${dis}>${esc(l.Address)}</textarea></label>
-          <label>Email<input type="email" name="Email" value="${esc(l.Email)}" ${dis}></label>
-          <h3 style="margin-top:6px">Licence</h3>
-          <div class="grid3"><label>Licence no *<input type="text" name="Title" value="${esc(l.Title)}" class="mono" ${dis}></label>
-            <label>Licence type *<select name="LicenceType" ${dis}>${opt(CHOICES.LICENCE_TYPES, l.LicenceType)}</select></label>
-            <label>Status<select name="LicenceStatus" ${dis}>${opt(CHOICES.STATUSES, l.LicenceStatus || "Active")}</select></label></div>
-          <div class="grid2"><label>Issued *<input type="date" name="IssueDate" value="${esc(String(l.IssueDate || "").slice(0, 10))}" ${dis}></label>
-            <label>Expires *<input type="date" name="ExpiryDate" value="${esc(String(l.ExpiryDate || "").slice(0, 10))}" ${dis}></label></div>
-          <label>Notes (not printed)<textarea name="Notes" ${dis}>${esc(l.Notes)}</textarea></label>
+        <form class="card" id="mainForm" autocomplete="off"><h3>Licence holder</h3>
+          <div class="grid2"><label>Surname *<input type="text" name="Surname" value="${esc(h.Surname)}" ${dis}></label>
+            <label>Given names *<input type="text" name="GivenNames" value="${esc(h.GivenNames)}" ${dis}></label></div>
+          <div class="grid3"><label>Date of birth *<input type="date" name="DateOfBirth" value="${esc(String(h.DateOfBirth || "").slice(0, 10))}" ${dis}></label>
+            <label>Sex<select name="Sex" ${dis}>${["", "M", "F", "X"].map(o => `<option ${o === (h.Sex || "") ? "selected" : ""}>${o}</option>`).join("")}</select></label>
+            <label>Phone<input type="text" name="Phone" value="${esc(h.Phone)}" ${dis}></label></div>
+          <label>Address (printed on the card)<textarea name="Address" ${dis}>${esc(h.Address)}</textarea></label>
+          <label>Email<input type="email" name="Email" value="${esc(h.Email)}" ${dis}></label>
+          <label>Notes (not printed)<textarea name="Notes" ${dis}>${esc(h.Notes)}</textarea></label>
         </form>
-        <div class="card"><div class="bar" style="margin-bottom:8px"><h3 style="margin:0">Firearms on this licence</h3><span class="grow"></span>
-            ${!ro && !isNew ? `<button class="btn sm" id="addGun">+ Add firearm</button>` : ""}</div>
-          ${isNew ? `<p class="muted small">Save the licence first, then add firearms.</p>` : guns.length ? `<table><thead><tr><th>Serial no</th><th>Type</th><th>Make / model</th><th>Calibre</th><th>Purpose</th><th></th></tr></thead><tbody>
-            ${guns.map(g => `<tr><td class="mono">${esc(g.Title)}</td><td>${esc(g.FirearmType)}</td><td>${esc([g.Make, g.Model].filter(Boolean).join(" "))}</td><td>${esc(g.Calibre)}</td><td title="${esc(purposeName(g.Purpose))}">${esc(g.Purpose)}</td>
-              <td style="text-align:right">${g._pending ? `<span class="tag info">waiting</span> ` : ""}${ro ? "" : `<button class="btn sm" data-gun="${esc(g.ClientRef)}">Edit</button>`}</td></tr>`).join("")}</tbody></table>`
-            : `<p class="muted small">None recorded.</p>`}</div>
+        <div class="card"><div class="bar"><h3 style="margin:0">Licences (one per firearm)</h3><span class="grow"></span>
+            ${!ro && !isNew ? `<a class="btn primary sm" href="#/newlicence/${encodeURIComponent(ref)}">+ New licence</a>` : ""}</div>
+          ${isNew ? `<p class="muted small">Save the holder first, then add a licence for each firearm.</p>` : ls.length ? `<table><thead><tr><th>Licence no</th><th>Firearm</th><th>Purpose</th><th>Expires</th><th>Status</th><th>Printed</th></tr></thead><tbody>
+            ${ls.map(l => `<tr class="go" data-l="${esc(l.ClientRef)}"><td class="mono"><b>${esc(l.Title)}</b></td><td>${esc(gunText(l))}</td><td title="${esc(purposeName(l.Purpose))}">${esc(l.Purpose)}</td>
+              <td>${fmtDate(l.ExpiryDate)}</td><td><span class="tag ${STATUS_TAG[statusOf(l)] || ""}">${statusOf(l)}</span>${l._pending ? ` <span class="tag info">waiting</span>` : ""}</td><td>${l.LastPrinted ? fmtDate(l.LastPrinted) : "—"}</td></tr>`).join("")}</tbody></table>`
+            : `<p class="muted small">No licences yet.</p>`}</div>
         ${!isNew ? `<div class="card"><h3>History</h3><div id="hist" class="small muted">${online() ? "Loading…" : "History shows when you're online."}</div></div>` : ""}
       </div>
       <div>
         <div class="card"><h3>Photo</h3><div class="photo-box">
           <div id="photoSlot"><div class="nophoto">No photo</div></div>
           <div style="flex:1;min-width:180px">
-            ${ro ? "" : `<button class="btn primary" id="photoBtn">${l.PhotoItemId || l._localKey ? "Retake photo" : "Take photo"}</button>
+            ${ro ? "" : `<button class="btn primary" id="photoBtn">${h.PhotoItemId || h._localKey ? "Retake photo" : "Take photo"}</button>
               <label class="chk" style="margin-top:10px"><input type="checkbox" id="faceOpt" checked> Register the face for face recognition</label>
-              <p class="small muted">The face record lets you find this licence from a photo later, and warns if the same face is already on another licence.</p>
-              ${!isNew && (l.PhotoItemId || l._localKey) && !["Enrolled", "Waiting", "Check"].includes(l.FaceStatus) ? `<button class="btn sm" id="faceNow">Register face from this photo</button>` : ""}`}
-            ${l.FaceNote ? `<p class="small" style="color:var(--bad)">${esc(l.FaceNote)}</p>` : ""}
-            ${l.PhotoDate ? `<p class="small muted">Photo taken ${fmtDate(l.PhotoDate)}</p>` : ""}
+              <p class="small muted">The face record lets you find this person from a photo later, and warns if the same face is already on file under another name.</p>
+              ${!isNew && (h.PhotoItemId || h._localKey) && !["Enrolled", "Waiting", "Check"].includes(h.FaceStatus) ? `<button class="btn sm" id="faceNow">Register face from this photo</button>` : ""}`}
+            ${h.FaceNote ? `<p class="small" style="color:var(--bad)">${esc(faceNote(h))}</p>` : ""}
+            ${h.PhotoDate ? `<p class="small muted">Photo taken ${fmtDate(h.PhotoDate)} · used on all of this person's cards</p>` : ""}
           </div></div></div>
-        <div class="card"><div class="bar" style="margin-bottom:10px"><h3 style="margin:0">ID card</h3><span class="grow"></span>
+      </div>
+    </div>`;
+  const form = $("#mainForm");
+  form.oninput = () => { S.dirty = true; };
+  const val = () => Object.fromEntries([...new FormData(form)].map(([k, v]) => [k, String(v).trim()]));
+  const showPhoto = async () => {
+    const u = DRAFT_PHOTO ? URL.createObjectURL(DRAFT_PHOTO) : await photoUrl(h);
+    if (u) $("#photoSlot").innerHTML = `<img src="${u}" alt="Licence holder">`;
+  };
+  showPhoto();
+  const photoBtn = $("#photoBtn");
+  if (photoBtn) photoBtn.onclick = async () => {
+    const blob = await takeLicencePhoto(); if (!blob) return;
+    const withFace = $("#faceOpt").checked;
+    if (isNew) { DRAFT_PHOTO = blob; S.dirty = true; S.draftFace = withFace; showPhoto(); return; }
+    await queuePhoto(h, blob, withFace); toast("Photo saved" + (online() ? "" : " on this device - it will be sent when you're online"));
+    route(true);
+  };
+  const faceNow = $("#faceNow");
+  if (faceNow) faceNow.onclick = async () => {
+    const b = await photoBlob(h); if (!b) return toast("The photo isn't available on this device");
+    await enqueue({ kind: "face", ref, file: { blob: b }, label: `Face record · ${fullName(h)}` });
+    mergeLocal(LISTS.holders, ref, { FaceStatus: "Waiting" }); route(true);
+  };
+  $$("tr[data-l]").forEach(tr => tr.onclick = () => location.hash = "#/licence/" + encodeURIComponent(tr.dataset.l));
+  const saveBtn = $("#saveBtn");
+  if (saveBtn) saveBtn.onclick = async () => {
+    const f = val();
+    const missing = [["Surname", "Surname"], ["GivenNames", "Given names"], ["DateOfBirth", "Date of birth"]].filter(([k]) => !f[k]).map(x => x[1]);
+    if (missing.length) return toast("Please fill in: " + missing.join(", "));
+    const twin = D.holders.find(x => x.ClientRef !== ref && norm(x.Surname) === norm(f.Surname) && norm(x.GivenNames) === norm(f.GivenNames) && String(x.DateOfBirth || "").slice(0, 10) === f.DateOfBirth);
+    if (twin && !confirm(`${fullName(twin)}, born ${fmtDate(twin.DateOfBirth)}, is already a holder. Add another licence to that person instead of creating a second one?\n\nOK = go to that person · Cancel = save this one anyway`)) {
+      /* save anyway */ } else if (twin) { S.dirty = false; location.hash = "#/holder/" + encodeURIComponent(twin.ClientRef); return; }
+    if (isNew) f.CapturedBy = me();
+    f.Title = fullName(f);
+    saveBtn.disabled = true;
+    mergeLocal(LISTS.holders, ref, f);
+    await enqueue({ kind: "upsert", list: LISTS.holders, ref, fields: f, label: `${isNew ? "New holder" : "Holder changes"} · ${f.Title}` });
+    const saved = holder(ref);
+    logActivity(isNew ? "Holder added" : "Holder updated", saved, null);
+    if (isNew && DRAFT_PHOTO) { await queuePhoto(saved, DRAFT_PHOTO, S.draftFace !== false); DRAFT_PHOTO = null; }
+    S.dirty = false; S.newRef = null;
+    toast(online() ? "Saved" : "Saved on this device - it will be sent when you're online");
+    if (isNew) location.hash = "#/holder/" + encodeURIComponent(ref); else route(true);
+  };
+  if (!isNew && online()) loadHistory("HolderRef", ref);
+}
+
+/* =====================================================================
+   LICENCE PAGE (new or existing): one firearm, its own number, purpose,
+   dates and status, and its card
+   ===================================================================== */
+let PREVIEW_T = null;
+async function pageLicence() {
+  const isNew = S.route === "newlicence";
+  const ref = isNew ? (S.newRef ||= newRef()) : S.param;
+  if (!isNew) S.newRef = null;
+  const existing = isNew ? null : lic(ref);
+  const h = holder(isNew ? S.param : existing?.HolderRef);
+  if (!isNew && !existing) { $("#main").innerHTML = banners() + `<div class="card empty">That licence isn't in the register${D.offlineCopy ? " copy on this device" : ""}. <a href="#/">Back to the register</a></div>`; return; }
+  if (!h) { $("#main").innerHTML = banners() + `<div class="card empty">The licence holder couldn't be found. <a href="#/holders">Holders</a></div>`; return; }
+  const l = existing || { ClientRef: ref, HolderRef: h.ClientRef, LicenceStatus: "Active", IssueDate: today(), ExpiryDate: addYears(today(), RULES.LICENCE_YEARS), LicenceType: CHOICES.LICENCE_TYPES[0] || "" };
+  const ro = !canEdit(), dis = ro ? "disabled" : "";
+  const opt = (arr, v) => [...new Set([...(arr || []), ...(v ? [v] : [])])].map(o => `<option ${o === v ? "selected" : ""}>${esc(o)}</option>`).join("");
+  const actBg = D.backgrounds.filter(b => b.Active !== "No" && b.Active !== false);
+  if (!S.card || S.card.ref !== ref) {
+    const saved = D.backgrounds.find(b => b.name === l.CardBackground);
+    S.card = saved ? { ref, bg: saved.fileId, orientation: saved.Orientation || "Landscape" }
+      : !isNew && l.CardOrientation ? { ref, bg: "", orientation: l.CardOrientation }
+      : actBg[0] ? { ref, bg: actBg[0].fileId, orientation: actBg[0].Orientation || "Landscape" } : { ref, bg: "", orientation: "Landscape" };
+  }
+  $("#main").innerHTML = banners() + `
+    <div class="bar"><a href="#/holder/${encodeURIComponent(h.ClientRef)}" class="btn sm">← ${esc(fullName(h))}</a>
+      <h2>${isNew ? "New licence" : "Licence " + esc(l.Title)}</h2>
+      ${!isNew ? `<span class="tag ${STATUS_TAG[statusOf(l)] || ""}">${statusOf(l)}</span>` : ""}${l._pending ? ` <span class="tag info">waiting to send</span>` : ""}<span class="grow"></span>
+      ${ro ? "" : `<button class="btn primary" id="saveBtn">${isNew ? "Save licence" : "Save changes"}</button>`}</div>
+    <div class="cols">
+      <div>
+        <div class="card"><h3>Licence holder</h3><div class="photo-box">
+          <div id="photoSlot"><div class="nophoto">No photo</div></div>
+          <div style="flex:1;min-width:180px"><div style="font-size:18px;font-weight:700">${esc(fullName(h))}</div>
+            <div class="small muted" style="margin:4px 0 8px">Born ${fmtDate(h.DateOfBirth) || "—"}${h.Phone ? " · " + esc(h.Phone) : ""}</div>
+            <div class="small" style="white-space:pre-line">${esc(h.Address)}</div>
+            <div style="margin-top:10px">${faceTag(h)} <a class="btn sm" href="#/holder/${encodeURIComponent(h.ClientRef)}">Open holder</a></div></div></div></div>
+        <form class="card" id="mainForm" autocomplete="off"><h3>Licence &amp; firearm</h3>
+          <div class="grid3"><label>Licence no *<input type="text" name="Title" value="${esc(l.Title)}" class="mono" ${dis}></label>
+            <label>Serial no (SN) *<input type="text" name="SerialNo" value="${esc(l.SerialNo)}" class="mono" ${dis}></label>
+            <label>Purpose * (the letter prints)<select name="Purpose" ${dis}>${purposeOptions(l.Purpose || "")}</select></label></div>
+          <div class="grid3"><label>Make<input type="text" name="Make" value="${esc(l.Make)}" ${dis}></label>
+            <label>Type<select name="FirearmType" ${dis}>${opt(["", ...CHOICES.FIREARM_TYPES], l.FirearmType || "")}</select></label>
+            <label>Calibre<input type="text" name="Calibre" value="${esc(l.Calibre)}" ${dis}></label></div>
+          <div class="grid3"><label>Issued *<input type="date" name="IssueDate" value="${esc(String(l.IssueDate || "").slice(0, 10))}" ${dis}></label>
+            <label>Expires *<input type="date" name="ExpiryDate" value="${esc(String(l.ExpiryDate || "").slice(0, 10))}" ${dis}></label>
+            <label>Status<select name="LicenceStatus" ${dis}>${opt(CHOICES.STATUSES, l.LicenceStatus || "Active")}</select></label></div>
+          <div class="grid2"><label>Licence type *<select name="LicenceType" ${dis}>${opt(CHOICES.LICENCE_TYPES, l.LicenceType)}</select></label>
+            <label>Model (not printed)<input type="text" name="Model" value="${esc(l.Model)}" ${dis}></label></div>
+          <label>Notes (not printed)<textarea name="Notes" ${dis}>${esc(l.Notes)}</textarea></label>
+        </form>
+        ${!isNew ? `<div class="card"><h3>History</h3><div id="hist" class="small muted">${online() ? "Loading…" : "History shows when you're online."}</div></div>` : ""}
+      </div>
+      <div>
+        <div class="card"><div class="bar"><h3 style="margin:0">ID card</h3><span class="grow"></span>
             <button class="btn sm" id="pngBtn" title="Save the card as a picture (e.g. for the card printer's own software)">Save as picture</button>
             ${ro ? "" : `<button class="btn primary sm" id="printBtn">Print card</button>`}</div>
           <canvas id="cardCv" class="cardview"></canvas>
@@ -544,56 +665,26 @@ async function pageLicence() {
       </div>
     </div>`;
 
-  const form = $("#licForm");
+  const form = $("#mainForm");
   form.oninput = () => { S.dirty = true; schedulePreview(); };
   const val = () => Object.fromEntries([...new FormData(form)].map(([k, v]) => [k, String(v).trim()]));
   const issueEl = form.elements.IssueDate, expEl = form.elements.ExpiryDate;
   if (issueEl) issueEl.onchange = () => { if (isNew && issueEl.value) { expEl.value = addYears(issueEl.value, RULES.LICENCE_YEARS); schedulePreview(); } };
+  photoUrl(h).then(u => { if (u) $("#photoSlot").innerHTML = `<img src="${u}" alt="Licence holder">`; });
 
-  // photo
-  const showPhoto = async () => {
-    const u = DRAFT_PHOTO ? URL.createObjectURL(DRAFT_PHOTO) : await photoUrl(l);
-    if (u) $("#photoSlot").innerHTML = `<img src="${u}" alt="Licence holder">`;
-  };
-  showPhoto();
-  const photoBtn = $("#photoBtn");
-  if (photoBtn) photoBtn.onclick = async () => {
-    const blob = await takeLicencePhoto(); if (!blob) return;
-    const withFace = $("#faceOpt").checked;
-    if (isNew) { DRAFT_PHOTO = blob; S.dirty = true; S.draftFace = withFace; showPhoto(); schedulePreview(); return; }
-    await queuePhoto(l, blob, withFace); toast("Photo saved" + (online() ? "" : " on this device - it will be sent when you're online"));
-    route(true);
-  };
-  const faceNow = $("#faceNow");
-  if (faceNow) faceNow.onclick = async () => {
-    const b = await photoBlob(l); if (!b) return toast("The photo isn't available on this device");
-    await enqueue({ kind: "face", ref, file: { blob: b }, label: `Face record · ${l.Title}` });
-    mergeLocal(LISTS.licences, ref, { FaceStatus: "Waiting" }); route(true);
-  };
-
-  // card preview + background picker
   const cv = $("#cardCv");
-  /* What goes on the card: the licence, plus one firearm for layouts that print a firearm */
   const cardParts = async () => {
     const bgMeta = D.backgrounds.find(b => b.fileId === S.card.bg);
     const bg = await bgFor(bgMeta, S.card.orientation);
-    const T = bg.layout && ZDCard.LAYOUTS[bg.layout];
-    if (T?.needsFirearm && !guns.some(g => g.ClientRef === S.card.gun)) S.card.gun = guns[0]?.ClientRef || "";
-    const gun = T?.needsFirearm ? guns.find(g => g.ClientRef === S.card.gun) : null;
-    const photoB = DRAFT_PHOTO || await photoBlob(l);
-    return { bgMeta, bg, T, gun, data: cardData({ ...l, ...val() }, gun), photo: photoB ? await blobImage(photoB) : null };
+    const photoB = await photoBlob(h);
+    return { bgMeta, bg, data: cardData(h, { ...l, ...val() }), photo: photoB ? await blobImage(photoB) : null };
   };
   const drawPreview = async () => {
     const c = await cardParts();
     ZDCard.drawCard(cv, c.data, c.photo, c.bg, BRAND);
     cv.classList.toggle("portrait", cv.height > cv.width);
-    const note = $("#cardNote"); if (!note) return;
-    note.innerHTML = (c.T?.needsFirearm ? (guns.length ? `Firearm on this card: <select id="gunSel" style="width:auto">${guns.map(g => `<option value="${esc(g.ClientRef)}" ${g.ClientRef === S.card.gun ? "selected" : ""}>${esc(g.Title)} · ${esc([g.Make, g.FirearmType].filter(Boolean).join(" "))}</option>`).join("")}</select>`
-        : `<span style="color:var(--warn)">This card prints a firearm - add one under "Firearms on this licence".</span>`) : "")
-      + (c.bg.preprinted ? `<div style="margin-top:6px">Preprinted card: only the photo and the details are printed - the background is shown here just to check the line-up.</div>` : "");
-    const gs = $("#gunSel"); if (gs) gs.onchange = () => { S.card.gun = gs.value; drawPreview(); };
+    $("#cardNote").innerHTML = c.bg.preprinted ? `Preprinted card: only the photo and the details are printed - the background is shown here just to check the line-up.` : "";
   };
-  /* The exact picture that goes to the printer (no background on preprinted cards) */
   const printCanvas = async () => {
     const c = await cardParts(), out = document.createElement("canvas");
     ZDCard.drawCard(out, c.data, c.photo, c.bg, BRAND, { print: true });
@@ -613,7 +704,6 @@ async function pageLicence() {
       const k = b.dataset.bg, meta = D.backgrounds.find(x => x.fileId === k);
       S.card = meta ? { ref, bg: k, orientation: meta.Orientation || "Landscape" } : { ref, bg: "", orientation: k.split("-")[1] };
       $$("[data-bg]").forEach(x => x.classList.toggle("on", x === b));
-      if (!isNew) S.cardChanged = true;
       S.dirty = true; drawPreview();
     });
   }
@@ -624,48 +714,39 @@ async function pageLicence() {
   const printBtn = $("#printBtn");
   if (printBtn) printBtn.onclick = async () => {
     if (S.dirty || isNew) return toast("Save the licence first, then print the card");
-    if (statusOf(l) !== "Active" && statusOf(l) !== "Expiring" && !confirm(`This licence is ${statusOf(l)}. Print a card anyway?`)) return;
-    if (!(l.PhotoItemId || l._localKey) && !confirm("There's no photo. Print the card without one?")) return;
+    if (!["Active", "Expiring"].includes(statusOf(l)) && !confirm(`This licence is ${statusOf(l)}. Print a card anyway?`)) return;
+    if (!(h.PhotoItemId || h._localKey) && !confirm("The holder has no photo. Print the card without one?")) return;
     const { out, c } = await printCanvas();
-    if (c.T?.needsFirearm && !c.gun && !confirm("No firearm is recorded on this licence. Print the card without one?")) return;
     ZDCard.printCard(out, printSettings());
     const fields = { LastPrinted: today(), PrintCount: num(l.PrintCount) + 1 };
     mergeLocal(LISTS.licences, ref, fields);
     await enqueue({ kind: "upsert", list: LISTS.licences, ref, fields, label: `Card printed · ${l.Title}` });
-    logActivity("Card printed", l, [(c.bgMeta?.Title || c.bgMeta?.name) || "No background", c.gun ? "firearm " + c.gun.Title : ""].filter(Boolean).join(" · "));
+    logActivity("Card printed", h, l, (c.bgMeta?.Title || c.bgMeta?.name) || "No background");
   };
-
-  // save
   const saveBtn = $("#saveBtn");
   if (saveBtn) saveBtn.onclick = async () => {
     const f = val();
-    const missing = [["Surname", "Surname"], ["GivenNames", "Given names"], ["DateOfBirth", "Date of birth"], ["Title", "Licence no"], ["LicenceType", "Licence type"], ["IssueDate", "Issued"], ["ExpiryDate", "Expires"]].filter(([k]) => !f[k]).map(x => x[1]);
+    const missing = [["Title", "Licence no"], ["LicenceType", "Licence type"], ["Purpose", "Purpose"], ["IssueDate", "Issued"], ["ExpiryDate", "Expires"], ["SerialNo", "Serial no"]].filter(([k]) => !f[k]).map(x => x[1]);
     if (missing.length) return toast("Please fill in: " + missing.join(", "));
     if (f.ExpiryDate < f.IssueDate) return toast("The expiry date is before the issue date");
     const dup = D.licences.find(x => x.ClientRef !== ref && norm(x.Title) === norm(f.Title));
-    if (dup) return toast(`Licence no ${f.Title} is already used for ${fullName(dup)}`);
+    if (dup) return toast(`Licence no ${f.Title} is already used (${fullName(holder(dup.HolderRef) || {})})`);
+    const gun = D.licences.find(x => x.ClientRef !== ref && norm(x.SerialNo) === norm(f.SerialNo) && !["Cancelled"].includes(x.LicenceStatus));
+    if (gun && !confirm(`Serial no ${f.SerialNo} is already on licence ${gun.Title} (${fullName(holder(gun.HolderRef) || {})}). Save anyway?`)) return;
     const bgMeta = D.backgrounds.find(b => b.fileId === S.card.bg);
-    Object.assign(f, { CardBackground: bgMeta ? bgMeta.name : "", CardOrientation: bgMeta ? (bgMeta.Orientation || "Landscape") : S.card.orientation });
+    Object.assign(f, { HolderRef: h.ClientRef, CardBackground: bgMeta ? bgMeta.name : "", CardOrientation: bgMeta ? (bgMeta.Orientation || "Landscape") : S.card.orientation });
     if (isNew) f.CapturedBy = me();
     saveBtn.disabled = true;
     mergeLocal(LISTS.licences, ref, f);
     await enqueue({ kind: "upsert", list: LISTS.licences, ref, fields: f, label: `${isNew ? "New licence" : "Licence changes"} · ${f.Title}` });
-    const saved = lic(ref);
-    logActivity(isNew ? "Licence created" : "Licence updated", saved);
-    if (isNew && DRAFT_PHOTO) { await queuePhoto(saved, DRAFT_PHOTO, S.draftFace !== false); DRAFT_PHOTO = null; }
+    logActivity(isNew ? "Licence created" : "Licence updated", h, lic(ref));
     S.dirty = false; S.newRef = null;
     toast(online() ? "Saved" : "Saved on this device - it will be sent when you're online");
     if (isNew) location.hash = "#/licence/" + encodeURIComponent(ref); else route(true);
   };
-
-  // firearms
-  const addGun = $("#addGun");
-  if (addGun) addGun.onclick = () => gunDialog(l, null);
-  $$("[data-gun]").forEach(b => b.onclick = () => gunDialog(l, D.firearms.find(g => g.ClientRef === b.dataset.gun)));
-
-  // history (online only)
-  if (!isNew && online()) loadHistory(ref);
+  if (!isNew && online()) loadHistory("LicenceRef", ref);
 }
+
 /* Purpose codes: stored and printed as the letter ("B"), shown with its meaning ("B - Self Protection") */
 const PURPOSE_LIST = (CHOICES.PURPOSES || []).map(p => Array.isArray(p) ? p : [p, p]);
 const purposeName = code => (PURPOSE_LIST.find(p => p[0] === code) || [])[1] || "";
@@ -681,70 +762,84 @@ async function bgFor(b, orientation = "Landscape") {
     showHeader: b.ShowHeader !== "No" && b.ShowHeader !== false, panel: b.TextPanel === "Yes",
     layout: b.Layout && b.Layout !== "Standard" ? b.Layout : "", preprinted: b.Preprinted === "Yes" };
 }
-/* Licence (+ one firearm) -> the field names the card layouts use */
-function cardData(l, gun) {
-  return { ...l, LicenceNo: l.Title, Registrar: BRAND.REGISTRAR || "",
-    SerialNo: gun?.Title || "", Make: gun?.Make || "", FirearmType: gun?.FirearmType || "", Calibre: gun?.Calibre || "",
-    Purpose: gun?.Purpose || "" };
+/* Holder + licence -> the field names the card layouts use */
+function cardData(h, l) {
+  return { ...h, ...l, LicenceNo: l.Title, Registrar: BRAND.REGISTRAR || "" };
 }
-async function queuePhoto(l, blob, withFace) {
+async function queuePhoto(h, blob, withFace) {
   const now = new Date(), stamp = `${ymd(now).replace(/-/g, "")}-${hhmm(now).replace(":", "")}${String(now.getSeconds()).padStart(2, "0")}`;
-  const localKey = `photo:local-${l.ClientRef}-${stamp}`;
+  const localKey = `photo:local-${h.ClientRef}-${stamp}`;
   await kvSet(localKey, blob);
   const fields = { PhotoDate: today() };
-  mergeLocal(LISTS.licences, l.ClientRef, fields, { _localKey: localKey });
-  await enqueue({ kind: "upsert", list: LISTS.licences, ref: l.ClientRef, fields, label: `Photo · ${l.Title}`,
-    file: { blob, localKey, type: "image/jpeg", path: `${l.ClientRef}/${stamp}.jpg` } });
-  logActivity("Photo taken", l);
+  mergeLocal(LISTS.holders, h.ClientRef, fields, { _localKey: localKey });
+  await enqueue({ kind: "upsert", list: LISTS.holders, ref: h.ClientRef, fields, label: `Photo · ${fullName(h)}`,
+    file: { blob, localKey, type: "image/jpeg", path: `${h.ClientRef}/${stamp}.jpg` } });
+  logActivity("Photo taken", h, null);
   if (withFace) {
-    await enqueue({ kind: "face", ref: l.ClientRef, file: { blob }, label: `Face record · ${l.Title}` });
-    mergeLocal(LISTS.licences, l.ClientRef, { FaceStatus: "Waiting", FaceNote: "" });
+    await enqueue({ kind: "face", ref: h.ClientRef, file: { blob }, label: `Face record · ${fullName(h)}` });
+    mergeLocal(LISTS.holders, h.ClientRef, { FaceStatus: "Waiting", FaceNote: "" });
   }
 }
-async function loadHistory(ref) {
+async function loadHistory(field, ref) {
   const el = $("#hist");
   try {
     let rows;
-    if (DEMO) rows = (await listItems(LISTS.activity)).filter(r => r.LicenceRef === ref);
+    if (DEMO) rows = (await listItems(LISTS.activity)).filter(r => r[field] === ref);
     else {
-      rows = []; let url = `/sites/${siteId}/lists/${LISTS.activity}/items?$filter=fields/LicenceRef eq '${ref}'&expand=fields&$top=200`;
+      rows = []; let url = `/sites/${siteId}/lists/${LISTS.activity}/items?$filter=fields/${field} eq '${ref}'&expand=fields&$top=200`;
       while (url) { const j = await graph(url, { headers: { Prefer: "HonorNonIndexedQueriesWarningMayFailRandomly" } }); rows.push(...j.value.map(i => i.fields)); url = j["@odata.nextLink"]; }
     }
     rows.sort((a, b) => String(b.ActivityAt).localeCompare(String(a.ActivityAt)));
-    if (el && el.isConnected) el.innerHTML = rows.length ? `<ul class="plain">${rows.slice(0, 50).map(r => `<li><span class="mono">${esc(fmtDate(String(r.ActivityAt).slice(0, 10)) + " " + String(r.ActivityAt).slice(11))}</span><span><b>${esc(r.Title)}</b> · ${esc(r.ActivityBy)}${r.Details ? ` <span class="muted">· ${esc(r.Details)}</span>` : ""}</span></li>`).join("")}</ul>` : "Nothing recorded yet.";
+    if (el && el.isConnected) el.innerHTML = rows.length ? `<ul class="plain">${rows.slice(0, 50).map(r => `<li><span class="mono">${esc(fmtDate(String(r.ActivityAt).slice(0, 10)) + " " + String(r.ActivityAt).slice(11))}</span><span><b>${esc(r.Title)}</b>${field === "HolderRef" && r.LicenceNo ? " · " + esc(r.LicenceNo) : ""} · ${esc(r.ActivityBy)}${r.Details ? ` <span class="muted">· ${esc(r.Details)}</span>` : ""}</span></li>`).join("")}</ul>` : "Nothing recorded yet.";
   } catch (e) { if (el && el.isConnected) el.textContent = isMissingList(e) ? `The ${LISTS.activity} list isn't set up.` : "History couldn't be loaded."; }
-}
-function gunDialog(l, g) {
-  const opt = (arr, v) => [...new Set([...(arr || []), ...(v ? [v] : [])])].map(o => `<option ${o === v ? "selected" : ""}>${esc(o)}</option>`).join("");
-  openDialog({ title: g ? "Edit firearm" : "Add firearm", save: "Save", extra: g ? `<button type="button" class="btn danger" id="gunDel">Remove from licence</button>` : "",
-    body: `<div class="grid2"><label>Serial no *<input type="text" name="Title" value="${esc(g?.Title)}" class="mono"></label>
-      <label>Type<select name="FirearmType">${opt(CHOICES.FIREARM_TYPES, g?.FirearmType || CHOICES.FIREARM_TYPES[0])}</select></label>
-      <label>Make<input type="text" name="Make" value="${esc(g?.Make)}"></label><label>Model<input type="text" name="Model" value="${esc(g?.Model)}"></label>
-      <label>Calibre<input type="text" name="Calibre" value="${esc(g?.Calibre)}"></label>
-      <label>Purpose (the letter prints on the card)<select name="Purpose">${purposeOptions(g?.Purpose || "")}</select></label></div>`,
-    onSubmit: async f => {
-      if (!f.Title) { toast("The serial number is needed"); return false; }
-      const ref = g?.ClientRef || newRef();
-      Object.assign(f, { LicenceRef: l.ClientRef, LicenceNo: l.Title, Removed: "No" });
-      mergeLocal(LISTS.firearms, ref, f);
-      await enqueue({ kind: "upsert", list: LISTS.firearms, ref, fields: f, label: `Firearm ${f.Title} · ${l.Title}` });
-      logActivity(g ? "Firearm updated" : "Firearm added", l, f.Title); route(true);
-    } });
-  const del = $("#gunDel");
-  if (del) del.onclick = async () => {
-    if (!confirm("Remove this firearm from the licence?")) return;
-    $("#dlg").close();
-    mergeLocal(LISTS.firearms, g.ClientRef, { Removed: "Yes" });
-    await enqueue({ kind: "upsert", list: LISTS.firearms, ref: g.ClientRef, fields: { Removed: "Yes" }, label: `Firearm removed · ${l.Title}` });
-    logActivity("Firearm removed", l, g.Title); route(true);
-  };
 }
 
 /* =====================================================================
-   FIND BY FACE
+   CONVERT records made before "one licence per firearm" (12 Nov 2026):
+   the old licence row held the person; it becomes a holder with the SAME
+   reference, so the photo and the face record stay attached. Its first
+   firearm moves onto the licence; any further firearms become licences of
+   their own, numbered "<old no>-2", "-3"... for the office to renumber.
+   ===================================================================== */
+async function convertOldRecords() {
+  if (!canEdit()) return;
+  const old = D.licences.filter(l => !l.HolderRef && (l.Surname || l.GivenNames));
+  for (const o of old) {
+    const hf = {};
+    ["Surname", "GivenNames", "DateOfBirth", "Sex", "Address", "Phone", "Email", "PhotoUrl", "PhotoItemId", "PhotoDate",
+     "FaceId", "FaceStatus", "FaceNote", "FaceDate", "CapturedBy"].forEach(k => { if (o[k] != null && o[k] !== "") hf[k] = o[k]; });
+    hf.Title = fullName(hf);
+    if (!holder(o.ClientRef)) {
+      mergeLocal(LISTS.holders, o.ClientRef, hf);
+      await enqueue({ kind: "upsert", list: LISTS.holders, ref: o.ClientRef, fields: hf, label: `Converted holder · ${hf.Title}` });
+    }
+    const guns = D.firearms.filter(g => g.LicenceRef === o.ClientRef && g.Removed !== "Yes");
+    const g0 = guns[0] || {};
+    const lf = { HolderRef: o.ClientRef, SerialNo: g0.Title || "", Make: g0.Make || "", Model: g0.Model || "", FirearmType: g0.FirearmType || "",
+      Calibre: g0.Calibre || "", Purpose: g0.Purpose || "" };
+    // the old row keeps its id; give the licence a new ClientRef so it can't clash with the holder's
+    const newLicRef = newRef();
+    const base = { Title: o.Title, LicenceType: o.LicenceType || "", LicenceStatus: o.LicenceStatus || "Active", IssueDate: o.IssueDate || "", ExpiryDate: o.ExpiryDate || "",
+      Notes: o.Notes || "", CardBackground: o.CardBackground || "", CardOrientation: o.CardOrientation || "", LastPrinted: o.LastPrinted || "", PrintCount: o.PrintCount || 0, CapturedBy: o.CapturedBy || "" };
+    D.licences = D.licences.filter(x => x !== o);
+    // re-label the existing SharePoint row (found by its old ClientRef), then it carries the new ref
+    mergeLocal(LISTS.licences, newLicRef, { ...base, ...lf });
+    await enqueue({ kind: "upsert", list: LISTS.licences, ref: o.ClientRef, fields: { ...base, ...lf, ClientRef: newLicRef }, label: `Converted licence · ${o.Title}` });
+    for (let i = 1; i < guns.length; i++) {
+      const g = guns[i], r = newRef(), f = { ...base, Title: `${o.Title}-${i + 1}`, LastPrinted: "", PrintCount: 0, HolderRef: o.ClientRef, SerialNo: g.Title || "", Make: g.Make || "",
+        Model: g.Model || "", FirearmType: g.FirearmType || "", Calibre: g.Calibre || "", Purpose: g.Purpose || "", Notes: "Converted from licence " + o.Title + " - give this licence its own number" };
+      mergeLocal(LISTS.licences, r, f);
+      await enqueue({ kind: "upsert", list: LISTS.licences, ref: r, fields: f, label: `Converted licence · ${f.Title}` });
+    }
+  }
+  if (old.length) toast(`${old.length} older record${old.length === 1 ? "" : "s"} converted to holder + licence`);
+}
+
+/* =====================================================================
+   FIND BY FACE - matches are licence holders
    ===================================================================== */
 function pageFace() {
-  $("#main").innerHTML = banners() + `<div class="bar"><h2>Find a licence by face</h2></div>
+  $("#main").innerHTML = banners() + `<div class="bar"><h2>Find a licence holder by face</h2></div>
     <div class="card"><p>Take a photo of the person (or load one). The face is compared with every licence holder who has a face record, and the closest matches are listed. The photo isn't kept.</p>
       <button class="btn primary" id="fbf" ${online() ? "" : "disabled"}>Take photo</button>
       ${online() ? "" : `<p class="small" style="color:var(--warn)">Needs an internet connection.</p>`}<div id="fbfOut" style="margin-top:14px"></div></div>`;
@@ -752,12 +847,12 @@ function pageFace() {
     const r = await openCamera({ title: "Find by face", sub: "One face in the picture, looking at the camera.", allowFile: true, guide: "oval", prefKey: "zd-cam-photo",
       onShot: async (blob, msg) => { msg("Searching…", true); return faceCall({ action: "licenseeSearch", image: await blobToB64(await shrink(blob, 1200)) }); } });
     if (!r) return;
-    const out = $("#fbfOut");
-    const hits = (r.matches || []).map(m => ({ ...m, l: lic(m.ref) })).filter(m => m.l);
-    out.innerHTML = hits.length ? `<ul class="plain">${hits.map(m => `<li><img class="thumb" data-photo="${esc(m.ref)}" alt=""><span class="grow"><b>${esc(fullName(m.l))}</b><br><span class="mono small">${esc(m.l.Title)}</span> · ${statusOf(m.l)}</span>
-      <span class="tag ${m.similarity >= 95 ? "ok" : "warn"}">${m.similarity}% match</span><a class="btn sm" href="#/licence/${encodeURIComponent(m.ref)}">Open</a></li>`).join("")}</ul>`
+    const hits = (r.matches || []).map(m => ({ ...m, h: holder(m.ref) })).filter(m => m.h);
+    $("#fbfOut").innerHTML = hits.length ? `<ul class="plain">${hits.map(m => `<li><img class="thumb" data-photo="${esc(m.ref)}" alt=""><span class="grow"><b>${esc(fullName(m.h))}</b><br>
+      <span class="small">${D.licences.filter(l => l.HolderRef === m.ref).map(l => `<span class="mono">${esc(l.Title)}</span> ${statusOf(l)}`).join(" · ") || "no licences"}</span></span>
+      <span class="tag ${m.similarity >= 95 ? "ok" : "warn"}">${m.similarity}% match</span><a class="btn sm" href="#/holder/${encodeURIComponent(m.ref)}">Open</a></li>`).join("")}</ul>`
       : `<p class="muted">No licence holder matches this face.</p>`;
-    $$("img[data-photo]").forEach(async img => { const u = await photoUrl(lic(img.dataset.photo) || {}); if (u) img.src = u; });
+    fillThumbs();
   };
 }
 
@@ -773,14 +868,14 @@ async function pageBackgrounds() {
   const list = $("#bgList");
   for (const b of D.backgrounds) {
     const div = document.createElement("div"); div.className = "card";
-    div.innerHTML = `<div class="bar" style="margin-bottom:8px"><b>${esc(b.Title || b.name)}</b><span class="grow"></span>
+    div.innerHTML = `<div class="bar"><b>${esc(b.Title || b.name)}</b><span class="grow"></span>
         ${b.Layout && b.Layout !== "Standard" ? `<span class="tag info">${esc(b.Layout)}</span>` : ""}${b.Preprinted === "Yes" ? `<span class="tag">Preprinted</span>` : ""}<span class="tag ${b.Active === "No" ? "" : "ok"}">${b.Active === "No" ? "Hidden" : "In use"}</span><button class="btn sm" data-edit>Edit</button></div>
       <canvas class="cardview ${b.Orientation === "Portrait" ? "portrait" : ""}"></canvas>
       <p class="small muted" data-info style="margin:8px 0 0">${esc(b.name)}</p>`;
     list.appendChild(div);
     div.querySelector("[data-edit]").onclick = () => bgDialog(b);
     const bgs = await bgFor(b), img = bgs.image;
-    ZDCard.drawCard(div.querySelector("canvas"), cardData(SAMPLE, SAMPLE_GUN), null, bgs, BRAND);
+    ZDCard.drawCard(div.querySelector("canvas"), cardData(SAMPLE_HOLDER, SAMPLE_LIC), null, bgs, BRAND);
     if (img) div.querySelector("[data-info]").innerHTML = `${esc(b.name)} · ${img.naturalWidth} × ${img.naturalHeight} px · ${esc(trimNote(img.naturalWidth, img.naturalHeight, b.Orientation))}`;
   }
   $("#bgFile").onchange = async e => {
@@ -840,7 +935,7 @@ async function pageStaff() {
       : `<div class="empty">Nobody yet - add yourself as Admin first.</div>`}</div>
     <div class="card small"><b>Roles</b>: <b>Admin</b> - everything, including backgrounds and staff. <b>Officer</b> - add and change licences, take photos, print cards, find by face. <b>Viewer</b> - look only.<br>
       Everyone here also needs to be in the <b>${esc(BRAND.OFFICE_GROUP)}</b> SharePoint group (the group is what actually allows reading and changing the lists).</div>
-    <div class="card"><div class="bar" style="margin-bottom:8px"><h3 style="margin:0">Sign-in face records</h3><span class="grow"></span><button class="btn sm" id="loadFaces">Show</button></div>
+    <div class="card"><div class="bar"><h3 style="margin:0">Sign-in face records</h3><span class="grow"></span><button class="btn sm" id="loadFaces">Show</button></div>
       <div id="faces" class="small muted">Only administrators listed in the face service's ADMIN_USERS setting can see or reset these.</div></div>`;
   $("#addStaff").onclick = () => staffDialog(null);
   $$("[data-st]").forEach(b => b.onclick = () => staffDialog(D.staff.find(s => (s.ClientRef || s.id) === b.dataset.st)));

@@ -4,7 +4,7 @@
 #  WHAT IT DOES (it pauses before each step - press Enter to go on):
 #    1. Creates the site /sites/ZD_POC (private, no Microsoft 365 group)
 #       - skipped if it exists
-#    2. Creates the four lists:  ZD_Licences, ZD_Firearms, ZD_Staff, ZD_Activity
+#    2. Creates the lists:  ZD_Holders, ZD_Licences, ZD_Firearms (old), ZD_Staff, ZD_Activity
 #    3. Creates the two picture libraries:  ZD_LicencePhotos, ZD_CardBackgrounds
 #    4. Creates the SharePoint group "ZD Licensing Office" with Edit rights
 #       and adds you to it
@@ -83,17 +83,29 @@ function Set-TitleName($list, $label) {
 }
 
 # ---------------------------------------------------------------------
-Pause-Step "STEP 2 of 4 - Create the lists ${Prefix}Licences, ${Prefix}Firearms, ${Prefix}Staff, ${Prefix}Activity"
+Pause-Step "STEP 2 of 4 - Create the lists ${Prefix}Holders, ${Prefix}Licences, ${Prefix}Firearms, ${Prefix}Staff, ${Prefix}Activity"
 # Dates are stored as plain text YYYY-MM-DD (no time-zone shift), like the other Hubs.
 
+# Licence holders (the people). Photo and face record belong here.
+$H = "${Prefix}Holders"
+Ensure-List $H "GenericList" "Licence holders - one row per person (ZD Licensing app)"
+Set-TitleName $H "Name"
+foreach ($c in "Surname","GivenNames","DateOfBirth","Sex","Phone","Email","PhotoItemId","PhotoDate",
+               "FaceId","FaceStatus","FaceDate","CapturedBy") { Ensure-Field $H $c "Text" }
+foreach ($c in "Address","Notes","PhotoUrl","FaceNote") { Ensure-Field $H $c "Note" }
+Ensure-Field $H "ClientRef" "Text" -Indexed
+
+# Licences - one per firearm, each with its own number, purpose, dates and card
 $L = "${Prefix}Licences"
-Ensure-List $L "GenericList" "Firearms licences - one row per licence (ZD Licensing app)"
+Ensure-List $L "GenericList" "Firearms licences - one row per licence = one firearm (ZD Licensing app)"
 Set-TitleName $L "Licence no"
 foreach ($c in "Surname","GivenNames","DateOfBirth","Sex","Phone","Email","LicenceType","LicenceStatus",
                "IssueDate","ExpiryDate","PhotoItemId","PhotoDate","FaceId","FaceStatus","FaceDate",
                "CardBackground","CardOrientation","LastPrinted","CapturedBy") { Ensure-Field $L $c "Text" }
 foreach ($c in "Address","Notes","PhotoUrl","FaceNote") { Ensure-Field $L $c "Note" }
 Ensure-Field $L "PrintCount" "Number"
+foreach ($c in "SerialNo","Make","Model","FirearmType","Calibre","Purpose") { Ensure-Field $L $c "Text" }
+Ensure-Field $L "HolderRef" "Text" -Indexed
 Ensure-Field $L "ClientRef" "Text" -Indexed
 
 $F = "${Prefix}Firearms"
@@ -115,6 +127,7 @@ Set-TitleName $A "Action"
 foreach ($c in "LicenceNo","ActivityBy","ActivityAt") { Ensure-Field $A $c "Text" }
 Ensure-Field $A "Details" "Note"
 Ensure-Field $A "LicenceRef" "Text" -Indexed
+Ensure-Field $A "HolderRef" "Text" -Indexed
 Ensure-Field $A "ClientRef" "Text" -Indexed
 
 # ---------------------------------------------------------------------

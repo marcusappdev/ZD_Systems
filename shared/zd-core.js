@@ -26,7 +26,7 @@ const DEMO = String(ZD_TENANT.CLIENT_ID).startsWith("<<");
 const FACE_API = DEMO ? "" : String(typeof ZD_FACE_API === "string" ? ZD_FACE_API : "").trim();
 const L = n => BRAND.LIST_PREFIX + n;
 const LISTS = {
-  licences: L("Licences"), firearms: L("Firearms"), staff: L("Staff"), activity: L("Activity"),
+  holders: L("Holders"), licences: L("Licences"), firearms: L("Firearms"), staff: L("Staff"), activity: L("Activity"),
   photos: L("LicencePhotos"), backgrounds: L("CardBackgrounds")
 };
 const SCOPES = ["Sites.ReadWrite.All", "User.Read"];
@@ -244,10 +244,10 @@ async function sendOp(op) {
   if (op.kind === "face") {
     const r = await faceCall({ action: "licenseeEnrol", ref: op.ref, image: await blobToB64(op.file.blob) });
     const f = { ClientRef: op.ref, FaceId: r.faceId || "", FaceStatus: r.duplicates?.length ? "Check" : "Enrolled",
-      FaceNote: r.duplicates?.length ? "Same face as licence(s): " + r.duplicates.map(d => `${d.ref} (${d.similarity}%)`).join(", ") : "", FaceDate: today() };
-    return sendOp({ kind: "upsert", list: LISTS.licences, ref: op.ref, fields: f });
+      FaceNote: r.duplicates?.length ? "Same face as holder(s): " + r.duplicates.map(d => `${d.ref} (${d.similarity}%)`).join(", ") : "", FaceDate: today() };
+    return sendOp({ kind: "upsert", list: LISTS.holders, ref: op.ref, fields: f });
   }
-  const f = { ...op.fields, ClientRef: op.ref };
+  const f = { ...op.fields, ClientRef: op.fields.ClientRef || op.ref };   // a converted row may take a new ClientRef
   const found = await findByRef(op.list, op.ref);
   if (op.file?.blob && !f.PhotoItemId) {
     const up = await uploadFile(LISTS.photos, op.file.path, op.file.blob, op.file.type || "image/jpeg");
@@ -276,7 +276,7 @@ async function flushQueue() {
         if (op.kind === "face" && e.status >= 400 && e.status < 500 && e.status !== 401) {
           // The photo itself was refused (no face, two faces, too dark): record it on the licence and move on
           try {
-            const saved = await sendOp({ kind: "upsert", list: LISTS.licences, ref: op.ref, fields: { FaceStatus: "Failed", FaceNote: e.message, FaceDate: today() } });
+            const saved = await sendOp({ kind: "upsert", list: LISTS.holders, ref: op.ref, fields: { FaceStatus: "Failed", FaceNote: e.message, FaceDate: today() } });
             await qDel(op.qid); SENT_HOOKS.forEach(h => { try { h({ ...op, kind: "upsert" }, saved); } catch {} }); continue;
           } catch (e2) { if (isNetErr(e2)) break; }
         }
