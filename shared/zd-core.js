@@ -244,7 +244,8 @@ async function enqueue(op) {
 }
 let FLUSH_T = null;
 const flushSoon = (ms = 1500) => { clearTimeout(FLUSH_T); FLUSH_T = setTimeout(flushQueue, ms); };
-const SENT_HOOKS = [];                          // app listens: (op, savedRow) after each op is sent
+const SENT_HOOKS = [];
+const KNOWN_IDS = new Map();                    // list|ClientRef -> SharePoint id of rows sent from this device                          // app listens: (op, savedRow) after each op is sent
 
 async function sendOp(op) {
   if (op.kind === "face") {
@@ -254,13 +255,18 @@ async function sendOp(op) {
     return sendOp({ kind: "upsert", list: LISTS.holders, ref: op.ref, fields: f });
   }
   const f = { ...op.fields, ClientRef: op.fields.ClientRef || op.ref };   // a converted row may take a new ClientRef
-  const found = await findByRef(op.list, op.ref);
+  // A row this device created moments ago may not show up in SharePoint's search yet, so
+  // remember its id: otherwise a quick second change would create a second copy.
+  const known = KNOWN_IDS.get(op.list + "|" + op.ref) || (await kvGet("id:" + op.list + "|" + op.ref).catch(() => null));
+  const found = known ? { id: known } : await findByRef(op.list, op.ref);
   if (op.file?.blob && !f.PhotoItemId) {
     const up = await uploadFile(LISTS.photos, op.file.path, op.file.blob, op.file.type || "image/jpeg");
     f.PhotoUrl = up.webUrl; f.PhotoItemId = up.id;
     await kvSet("photo:" + up.id, op.file.blob);                        // keep the offline copy under its real id
   }
-  return saveItem(op.list, found?.id || null, f);
+  const saved = await saveItem(op.list, found?.id || null, f);
+  for (const r of new Set([op.ref, f.ClientRef])) { KNOWN_IDS.set(op.list + "|" + r, saved.id); kvSet("id:" + op.list + "|" + r, saved.id).catch(() => {}); }
+  return saved;
 }
 async function flushQueue() {
   if (SYNC.busy) return; SYNC.busy = true;

@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ZD Licensing</title>
+<title>ZD Systems - Firearms Licensing</title>
 <meta name="theme-color" content="#18222e">
 <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.28.1/lib/msal-browser.min.js"></script>
 <link rel="stylesheet" href="shared/zd.css?v=20261113d">
 </head>
 <body>
 <header id="hdr" hidden>
-  <div class="logo" id="logo">ZD Licensing</div>
+  <div class="logo" id="logo">ZD SYSTEMS</div>
   <nav id="nav"></nav>
   <div class="who" id="who"></div>
 </header>
@@ -381,12 +381,12 @@ function logActivity(action, h, l, details = "") {
 
 /* ---------------- header, routing ---------------- */
 const NAV = [
-  ["", "Register", () => true], ["holders", "Holders", () => true], ["newholder", "New holder", canEdit], ["face", "Find by face", canEdit],
-  ["backgrounds", "Card backgrounds", isAdmin], ["staff", "Staff", isAdmin], ["settings", "Settings", () => true]];
+  ["", "Licence Holders", () => true], ["firearms", "Licensed Firearms", () => true], ["newholder", "+ New Holder", canEdit], ["face", "Find by Face", canEdit],
+  ["backgrounds", "Card Backgrounds", isAdmin], ["staff", "Staff", isAdmin], ["settings", "Settings", () => true]];
 function renderNav() {
-  $("#logo").innerHTML = `${esc(BRAND.SHORT)} Licensing${DEMO ? "<small>demo</small>" : ""}`;
-  const cur = { licence: "", newlicence: "holders", holder: "holders" }[S.route] ?? S.route;
-  $("#nav").innerHTML = NAV.filter(n => n[2]()).map(([k, label]) => `<a href="#/${k}" class="${(k || "register") === (cur || "register") ? "on" : ""}">${label}</a>`).join("");
+  $("#logo").innerHTML = `${esc(String(BRAND.COMPANY).toUpperCase())}${DEMO ? "<small>demo</small>" : ""}`;
+  const cur = { licence: "firearms", newlicence: "", holder: "", holders: "" }[S.route] ?? S.route;
+  $("#nav").innerHTML = NAV.filter(n => n[2]()).map(([k, label]) => `<a href="#/${k}" class="${(k || "home") === (cur || "home") ? "on" : ""}">${label}</a>`).join("");
   renderWho();
 }
 function renderWho() {
@@ -417,10 +417,10 @@ function route(quiet) {
     keep.forEach(([k, v]) => { if (f.elements[k]) f.elements[k].value = v; });
     S.dirty = true; f.dispatchEvent(new Event("input"));
   });
-  const allowed = { "": true, holders: true, holder: true, licence: true, newholder: canEdit(), newlicence: canEdit(), face: canEdit(), backgrounds: isAdmin(), staff: isAdmin(), settings: true };
+  const allowed = { "": true, firearms: true, holders: true, holder: true, licence: true, newholder: canEdit(), newlicence: canEdit(), face: canEdit(), backgrounds: isAdmin(), staff: isAdmin(), settings: true };
   if (!allowed[next]) { location.hash = "#/"; return; }
   renderNav();
-  ({ "": pageRegister, holders: pageHolders, holder: pageHolder, newholder: pageHolder, licence: pageLicence, newlicence: pageLicence,
+  ({ "": pageHolders, firearms: pageRegister, holders: pageHolders, holder: pageHolder, newholder: pageHolder, licence: pageLicence, newlicence: pageLicence,
      face: pageFace, backgrounds: pageBackgrounds, staff: pageStaff, settings: pageSettings })[next]();
 }
 function banners() {
@@ -464,9 +464,9 @@ function pageRegister() {
     return String(ha.Surname || "").localeCompare(String(hb.Surname || "")) || String(ha.GivenNames || "").localeCompare(String(hb.GivenNames || "")) || String(a.Title).localeCompare(String(b.Title));
   });
   $("#main").innerHTML = banners() + `
-    <div class="bar"><h2>Licence register</h2><span class="muted">${D.licences.length} licence${D.licences.length === 1 ? "" : "s"} · ${D.holders.length} holder${D.holders.length === 1 ? "" : "s"}</span><span class="grow"></span>
+    <div class="bar"><h2>Licensed firearms</h2><span class="muted">${D.licences.length} firearm${D.licences.length === 1 ? "" : "s"} · ${D.holders.length} holder${D.holders.length === 1 ? "" : "s"}</span><span class="grow"></span>
       <input type="search" id="q" placeholder="Search name, licence no, serial no, phone…" value="${esc(S.q)}" style="max-width:320px">
-      ${canEdit() ? `<a class="btn primary" href="#/holders" title="Pick the holder (or add a new one), then New licence">+ New licence</a>` : ""}</div>
+      ${canEdit() ? `<a class="btn primary" href="#/" title="Open the licence holder (or add a new one), then + Add licensed firearm">+ Add licensed firearm</a>` : ""}</div>
     <div class="chips" style="margin-bottom:12px">${FILTERS.map(([k, t]) => `<button class="chip ${S.filter === k ? "on" : ""}" data-f="${k}">${t} <span class="muted">${D.licences.filter(l => pass(l, k)).length}</span></button>`).join("")}</div>
     <div class="card" style="padding:0;overflow:auto">${rows.length ? `<table><thead><tr><th></th><th>Licence no</th><th>Holder</th><th>Firearm</th><th>Class</th><th>Purpose</th><th>Expires</th><th>Status</th><th>Face</th><th>Card printed</th></tr></thead><tbody>
       ${rows.slice(0, 500).map(l => { const st = statusOf(l), h = holder(l.HolderRef) || {}; return `<tr class="go" data-ref="${esc(l.ClientRef)}">
@@ -475,7 +475,7 @@ function pageRegister() {
         <td><span class="tag ${STATUS_TAG[st] || ""}">${st}</span>${l._pending ? ` <span class="tag info">waiting to send</span>` : ""}</td>
         <td>${faceTag(h)}</td><td>${l.LastPrinted ? fmtDate(l.LastPrinted) + (num(l.PrintCount) > 1 ? ` <span class="muted">(${num(l.PrintCount)}×)</span>` : "") : `<span class="muted">—</span>`}</td></tr>`; }).join("")}
       </tbody></table>${rows.length > 500 ? `<p class="muted small" style="padding:8px">Showing the first 500 - search to narrow down.</p>` : ""}`
-      : `<div class="empty">${D.licences.length ? "Nothing matches." : "No licences yet." + (canEdit() ? ` Start by adding the <a href="#/newholder">licence holder</a>.` : "")}</div>`}</div>`;
+      : `<div class="empty">${D.licences.length ? "Nothing matches." : "No licensed firearms yet." + (canEdit() ? ` Start by adding the <a href="#/newholder">licence holder</a>.` : "")}</div>`}</div>`;
   $("#q").oninput = e => { S.q = e.target.value; const pos = e.target.selectionStart; pageRegister(); const n = $("#q"); n.focus(); n.setSelectionRange(pos, pos); };
   $$("[data-f]").forEach(b => b.onclick = () => { S.filter = b.dataset.f; pageRegister(); });
   $$("tr[data-ref]").forEach(tr => tr.onclick = () => location.hash = "#/licence/" + encodeURIComponent(tr.dataset.ref));
@@ -495,9 +495,9 @@ function pageHolders() {
   $("#main").innerHTML = banners() + `
     <div class="bar"><h2>Licence holders</h2><span class="muted">${D.holders.length}</span><span class="grow"></span>
       <input type="search" id="hq" placeholder="Search name, phone, licence or serial no…" value="${esc(S.hq || "")}" style="max-width:320px">
-      ${canEdit() ? `<a class="btn primary" href="#/newholder">+ New holder</a>` : ""}</div>
-    ${canEdit() ? `<div class="banner info">To add a licence: open the holder (or add a new one), then click <b>+ New licence</b>. Each firearm has its own licence.</div>` : ""}
-    <div class="card" style="padding:0;overflow:auto">${rows.length ? `<table><thead><tr><th></th><th>Name</th><th>Date of birth</th><th>Phone</th><th>Licences</th><th>Face</th></tr></thead><tbody>
+      ${canEdit() ? `<a class="btn primary" href="#/newholder">+ New Holder</a>` : ""}</div>
+    ${canEdit() ? `<div class="banner info">A licence holder can have any number of licensed firearms. Open the holder (or add a new one), then click <b>+ Add licensed firearm</b> - each firearm gets its own licence number and card.</div>` : ""}
+    <div class="card" style="padding:0;overflow:auto">${rows.length ? `<table><thead><tr><th></th><th>Name</th><th>Date of birth</th><th>Phone</th><th>Licensed firearms (Lic No)</th><th>Face</th></tr></thead><tbody>
       ${rows.slice(0, 500).map(h => { const ls = D.licences.filter(l => l.HolderRef === h.ClientRef); return `<tr class="go" data-h="${esc(h.ClientRef)}">
         <td><img class="thumb" data-photo="${esc(h.ClientRef)}" alt=""></td><td><b>${esc(fullName(h))}</b>${h._pending ? ` <span class="tag info">waiting to send</span>` : ""}</td>
         <td>${fmtDate(h.DateOfBirth)}</td><td>${esc(h.Phone)}</td><td>${ls.length ? ls.map(l => `<span class="tag ${STATUS_TAG[statusOf(l)] || ""}">${esc(l.Title)}</span>`).join(" ") : `<span class="muted">none</span>`}</td><td>${faceTag(h)}</td></tr>`; }).join("")}
@@ -516,13 +516,14 @@ async function pageHolder() {
   const ref = isNew ? (S.newRef ||= newRef()) : S.param;
   if (!isNew) S.newRef = null;
   const h = isNew ? { ClientRef: ref } : holder(ref);
-  if (!h) { $("#main").innerHTML = banners() + `<div class="card empty">That holder isn't in the register${D.offlineCopy ? " copy on this device" : ""}. <a href="#/holders">Back to holders</a></div>`; return; }
+  if (!h) { $("#main").innerHTML = banners() + `<div class="card empty">That holder isn't in the register${D.offlineCopy ? " copy on this device" : ""}. <a href="#/">Back to licence holders</a></div>`; return; }
   if (isNew && !S.dirty) DRAFT_PHOTO = null;
   const ro = !canEdit(), dis = ro ? "disabled" : "";
   const ls = D.licences.filter(l => l.HolderRef === ref).sort((a, b) => String(a.Title).localeCompare(String(b.Title)));
   $("#main").innerHTML = banners() + `
-    <div class="bar"><a href="#/holders" class="btn sm">← Holders</a><h2>${isNew ? "New licence holder" : esc(fullName(h))}</h2>
+    <div class="bar"><a href="#/" class="btn sm">← Licence Holders</a><h2>${isNew ? "New licence holder" : esc(fullName(h))}</h2>
       ${!isNew ? faceTag(h) : ""}${h._pending ? ` <span class="tag info">waiting to send</span>` : ""}<span class="grow"></span>
+      ${isAdmin() && !isNew && !ls.length ? `<button class="btn danger" id="delHolder" title="Remove this holder (Admin only; only when they have no licensed firearms)">Delete holder</button>` : ""}
       ${ro ? "" : `<button class="btn primary" id="saveBtn">${isNew ? "Save holder" : "Save changes"}</button>`}</div>
     <div class="cols">
       <div>
@@ -537,12 +538,12 @@ async function pageHolder() {
           <label>Email<input type="email" name="Email" value="${esc(h.Email)}" ${dis}></label>
           <label>Notes (not printed)<textarea name="Notes" ${dis}>${esc(h.Notes)}</textarea></label>
         </form>
-        <div class="card"><div class="bar"><h3 style="margin:0">Licences (one per firearm)</h3><span class="grow"></span>
-            ${!ro && !isNew ? `<a class="btn primary sm" href="#/newlicence/${encodeURIComponent(ref)}">+ New licence</a>` : ""}</div>
-          ${isNew ? `<p class="muted small">Save the holder first, then add a licence for each firearm.</p>` : ls.length ? `<table><thead><tr><th>Licence no</th><th>Firearm</th><th>Class</th><th>Purpose</th><th>Expires</th><th>Status</th><th>Printed</th></tr></thead><tbody>
+        <div class="card"><div class="bar"><h3 style="margin:0">Licensed firearms</h3><span class="grow"></span>
+            ${!ro && !isNew ? `<a class="btn primary sm" href="#/newlicence/${encodeURIComponent(ref)}">+ Add licensed firearm</a>` : ""}</div>
+          ${isNew ? `<p class="muted small">Save the holder first, then add their firearms - each gets its own licence number.</p>` : ls.length ? `<table><thead><tr><th>Lic No</th><th>Firearm</th><th>Class</th><th>Purpose</th><th>Expires</th><th>Status</th><th>Printed</th></tr></thead><tbody>
             ${ls.map(l => `<tr class="go" data-l="${esc(l.ClientRef)}"><td class="mono"><b>${esc(l.Title)}</b></td><td>${esc(gunText(l))}</td><td title="${esc(className(l.Class))}">${esc(l.Class)}</td><td title="${esc(purposeName(l.Purpose))}">${esc(l.Purpose)}</td>
               <td>${fmtDate(l.ExpiryDate)}</td><td><span class="tag ${STATUS_TAG[statusOf(l)] || ""}">${statusOf(l)}</span>${l._pending ? ` <span class="tag info">waiting</span>` : ""}</td><td>${l.LastPrinted ? fmtDate(l.LastPrinted) : "—"}</td></tr>`).join("")}</tbody></table>`
-            : `<p class="muted small">No licences yet.</p>`}</div>
+            : `<p class="muted small">No licensed firearms yet.</p>`}</div>
         ${!isNew ? `<div class="card"><h3>History</h3><div id="hist" class="small muted">${online() ? "Loading…" : "History shows when you're online."}</div></div>` : ""}
       </div>
       <div>
@@ -601,6 +602,19 @@ async function pageHolder() {
     toast(online() ? "Saved" : "Saved on this device - it will be sent when you're online");
     if (isNew) location.hash = "#/holder/" + encodeURIComponent(ref); else route(true);
   };
+  const delHolder = $("#delHolder");
+  if (delHolder) delHolder.onclick = async () => {
+    if (!online()) return toast("Deleting needs an internet connection");
+    if (!confirm(`Delete licence holder ${fullName(h)}?\n\nThey have no licensed firearms. The record is removed from the register for good.`)) return;
+    try {
+      if (!String(h.id).startsWith("local-")) await deleteItem(LISTS.holders, h.id);
+      for (const op of (await qMine()).filter(o => (o.list === LISTS.holders || o.kind === "face") && o.ref === ref)) await qDel(op.qid);
+      await qCount();
+      D.holders = D.holders.filter(x => x !== h); saveSnapshot();
+      logActivity("Holder deleted", h, null);
+      S.dirty = false; toast("Holder deleted"); location.hash = "#/";
+    } catch (e) { toast(isForbidden(e) ? "SharePoint refused this (no permission)" : e.message); }
+  };
   if (!isNew && online()) loadHistory("HolderRef", ref);
 }
 
@@ -615,8 +629,8 @@ async function pageLicence() {
   if (!isNew) S.newRef = null;
   const existing = isNew ? null : lic(ref);
   const h = holder(isNew ? S.param : existing?.HolderRef);
-  if (!isNew && !existing) { $("#main").innerHTML = banners() + `<div class="card empty">That licence isn't in the register${D.offlineCopy ? " copy on this device" : ""}. <a href="#/">Back to the register</a></div>`; return; }
-  if (!h) { $("#main").innerHTML = banners() + `<div class="card empty">The licence holder couldn't be found. <a href="#/holders">Holders</a></div>`; return; }
+  if (!isNew && !existing) { $("#main").innerHTML = banners() + `<div class="card empty">That licence isn't in the register${D.offlineCopy ? " copy on this device" : ""}. <a href="#/firearms">Back to licensed firearms</a></div>`; return; }
+  if (!h) { $("#main").innerHTML = banners() + `<div class="card empty">The licence holder couldn't be found. <a href="#/">Licence Holders</a></div>`; return; }
   const l = existing || { ClientRef: ref, HolderRef: h.ClientRef, LicenceStatus: "Active", IssueDate: today(), ExpiryDate: addYears(today(), RULES.LICENCE_YEARS), LicenceType: CHOICES.LICENCE_TYPES[0] || "" };
   const ro = !canEdit(), dis = ro ? "disabled" : "";
   const opt = (arr, v) => [...new Set([...(arr || []), ...(v ? [v] : [])])].map(o => `<option ${o === v ? "selected" : ""}>${esc(o)}</option>`).join("");
@@ -629,7 +643,7 @@ async function pageLicence() {
   }
   $("#main").innerHTML = banners() + `
     <div class="bar"><a href="#/holder/${encodeURIComponent(h.ClientRef)}" class="btn sm">← ${esc(fullName(h))}</a>
-      <h2>${isNew ? "New licence" : "Licence " + esc(l.Title)}</h2>
+      <h2>${isNew ? "Add licensed firearm" : "Licensed firearm · Lic No " + esc(l.Title)}</h2>
       ${!isNew ? `<span class="tag ${STATUS_TAG[statusOf(l)] || ""}">${statusOf(l)}</span>` : ""}${l._pending ? ` <span class="tag info">waiting to send</span>` : ""}<span class="grow"></span>
       ${isAdmin() && !isNew ? `<button class="btn danger" id="delBtn" title="Remove this licence from the register (Admin only)">Delete licence</button>` : ""}
       ${ro ? "" : `<button class="btn primary" id="saveBtn">${isNew ? "Save licence" : "Save changes"}</button>`}</div>
