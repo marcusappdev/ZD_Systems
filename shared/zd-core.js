@@ -140,7 +140,9 @@ async function findByRef(list, ref) {
     { headers: { Prefer: "HonorNonIndexedQueriesWarningMayFailRandomly" } });
   const it = j.value?.[0]; return it ? { id: it.id, ...it.fields } : null;
 }
-/* Create or update with field fallback: strip columns SharePoint doesn't know and retry. */
+/* Create or update with field fallback: strip columns SharePoint doesn't know and retry.
+   Any column that had a value is remembered in SKIPPED, and the app shows a red warning. */
+const SKIPPED = new Set();
 async function saveItem(list, id, fields) {
   if (DEMO) {
     const rows = (await kvGet("demo:" + list)) || [];
@@ -157,7 +159,11 @@ async function saveItem(list, id, fields) {
       return id ? { id, ...res } : { id: res.id, ...res.fields };
     } catch (e) {
       const m = /Field '([^']+)' is not recognized/i.exec(e.message);
-      if (m && m[1] in f) { console.warn("Column not on list, skipped:", list, m[1]); delete f[m[1]]; continue; }
+      if (m && m[1] in f) {
+        console.warn("Column not on list, skipped:", list, m[1]);
+        if (f[m[1]] !== "" && f[m[1]] != null) { SKIPPED.add(`${list}.${m[1]}`); SYNC.onChange(); toast(`Not saved: ${m[1]} - SharePoint has no such column (run the set-up script)`); }
+        delete f[m[1]]; continue;
+      }
       throw e;
     }
   }

@@ -65,13 +65,14 @@ const S = { role: "", roleSource: "", route: "", param: "", filter: "all", q: ""
 let D = { holders: [], licences: [], firearms: [], staff: [], backgrounds: [], at: "", offlineCopy: false };
 const canEdit = () => S.role === "Admin" || S.role === "Officer";
 const isAdmin = () => S.role === "Admin";
-const SAMPLE_HOLDER = { GivenNames: "Sample", Surname: "Holder", DateOfBirth: "1985-06-14", Sex: "M", Address: "Section 12, Allotment 4, Konedobu, National Capital District" };
+const SAMPLE_HOLDER = { GivenNames: "Sample", MiddleName: "James", Surname: "Holder", DateOfBirth: "1985-06-14", Sex: "M", Address: "Section 12, Allotment 4, Konedobu, National Capital District" };
 const SAMPLE_LIC = { Title: "ZD-000123", LicenceType: "Shooter", IssueDate: today(), ExpiryDate: addYears(today(), RULES.LICENCE_YEARS),
   SerialNo: "4471-22983-RB", Make: "Remington", FirearmType: "Shotgun", Calibre: "12 gauge", Purpose: "B" };
 const arrFor = list => list === LISTS.holders ? D.holders : list === LISTS.licences ? D.licences : list === LISTS.firearms ? D.firearms : list === LISTS.staff ? D.staff : null;
 const lic = ref => D.licences.find(l => l.ClientRef === ref);
 const holder = ref => ref ? D.holders.find(h => h.ClientRef === ref) : null;
-const fullName = l => [l.GivenNames, String(l.Surname || "").toUpperCase()].filter(Boolean).join(" ");
+const firstNames = h => [h.GivenNames, h.MiddleName].map(v => String(v || "").trim()).filter(Boolean).join(" ");   // first + middle
+const fullName = l => [firstNames(l), String(l.Surname || "").toUpperCase()].filter(Boolean).join(" ");
 const norm = s => String(s || "").trim().toUpperCase();
 
 /* ---------------- start ---------------- */
@@ -426,6 +427,7 @@ function banners() {
   let h = "";
   if (DEMO) h += `<div class="banner info"><b>Demo mode</b> - nothing goes to Microsoft or SharePoint; everything stays in this browser and the face check is simulated. Add <code>?role=Officer</code> or <code>?role=Viewer</code> to the address to try other roles. Settings has a "Pretend to be offline" switch.</div>`;
   if (S.roleSource === "setup") h += `<div class="banner">First-run set-up: nobody is an Admin yet, so you have the Admin view. Open <a href="#/staff"><b>Staff</b></a>, add yourself as <b>Admin</b>, then add everyone else.</div>`;
+  if (SKIPPED.size) h += `<div class="banner err">SharePoint doesn't have these columns yet, so they were <b>not saved</b>: <b>${[...SKIPPED].map(esc).join(", ")}</b>. Run the set-up script (setup/Setup-ZD-Licensing.ps1), then re-enter them.</div>`;
   if (S.missing.length) h += `<div class="banner err">Not set up on the SharePoint site yet: <b>${S.missing.map(esc).join(", ")}</b>. Run the set-up script (setup/Setup-ZD-Licensing.ps1).</div>`;
   if (D.offlineCopy) h += `<div class="banner">Working offline - showing the copy saved on this device${D.at ? " at " + esc(localStamp(D.at)) : ""}. New work is kept on this device and sent when the connection is back.</div>`;
   if (S.offlinePass) h += `<div class="banner">No internet at sign-in: you're using the face check this device took at ${esc(localStamp(new Date(facePass()?.at || 0).toISOString()))}. A new face check will be asked for when you're back online.</div>`;
@@ -455,7 +457,7 @@ function pageRegister() {
     const st = statusOf(l), h = holder(l.HolderRef) || {};
     if (f === "stopped" ? !["Suspended", "Cancelled"].includes(st) : f === "face" ? !["Check", "Failed"].includes(h.FaceStatus)
       : f === "pending" ? !(l._pending || h._pending) : f !== "all" && st !== f) return false;
-    return !q || [l.Title, h.Surname, h.GivenNames, h.Phone, l.SerialNo, l.Make, l.LicenceType].some(v => String(v || "").toLowerCase().includes(q));
+    return !q || [l.Title, h.Surname, h.GivenNames, h.MiddleName, h.Phone, l.SerialNo, l.Make, l.LicenceType].some(v => String(v || "").toLowerCase().includes(q));
   };
   const rows = D.licences.filter(l => pass(l)).sort((a, b) => {
     const ha = holder(a.HolderRef) || {}, hb = holder(b.HolderRef) || {};
@@ -466,10 +468,10 @@ function pageRegister() {
       <input type="search" id="q" placeholder="Search name, licence no, serial no, phone…" value="${esc(S.q)}" style="max-width:320px">
       ${canEdit() ? `<a class="btn primary" href="#/holders" title="Pick the holder (or add a new one), then New licence">+ New licence</a>` : ""}</div>
     <div class="chips" style="margin-bottom:12px">${FILTERS.map(([k, t]) => `<button class="chip ${S.filter === k ? "on" : ""}" data-f="${k}">${t} <span class="muted">${D.licences.filter(l => pass(l, k)).length}</span></button>`).join("")}</div>
-    <div class="card" style="padding:0;overflow:auto">${rows.length ? `<table><thead><tr><th></th><th>Licence no</th><th>Holder</th><th>Firearm</th><th>Purpose</th><th>Expires</th><th>Status</th><th>Face</th><th>Card printed</th></tr></thead><tbody>
+    <div class="card" style="padding:0;overflow:auto">${rows.length ? `<table><thead><tr><th></th><th>Licence no</th><th>Holder</th><th>Firearm</th><th>Class</th><th>Purpose</th><th>Expires</th><th>Status</th><th>Face</th><th>Card printed</th></tr></thead><tbody>
       ${rows.slice(0, 500).map(l => { const st = statusOf(l), h = holder(l.HolderRef) || {}; return `<tr class="go" data-ref="${esc(l.ClientRef)}">
         <td><img class="thumb" data-photo="${esc(h.ClientRef || "")}" alt=""></td><td class="mono"><b>${esc(l.Title)}</b></td><td><b>${esc(fullName(h))}</b></td>
-        <td>${esc(gunText(l))}</td><td title="${esc(purposeName(l.Purpose))}">${esc(l.Purpose)}</td><td>${fmtDate(l.ExpiryDate)}</td>
+        <td>${esc(gunText(l))}</td><td title="${esc(className(l.Class))}">${esc(l.Class)}</td><td title="${esc(purposeName(l.Purpose))}">${esc(l.Purpose)}</td><td>${fmtDate(l.ExpiryDate)}</td>
         <td><span class="tag ${STATUS_TAG[st] || ""}">${st}</span>${l._pending ? ` <span class="tag info">waiting to send</span>` : ""}</td>
         <td>${faceTag(h)}</td><td>${l.LastPrinted ? fmtDate(l.LastPrinted) + (num(l.PrintCount) > 1 ? ` <span class="muted">(${num(l.PrintCount)}×)</span>` : "") : `<span class="muted">—</span>`}</td></tr>`; }).join("")}
       </tbody></table>${rows.length > 500 ? `<p class="muted small" style="padding:8px">Showing the first 500 - search to narrow down.</p>` : ""}`
@@ -487,7 +489,7 @@ function fillThumbs() { $$("img[data-photo]").forEach(async img => { const u = a
    ===================================================================== */
 function pageHolders() {
   const q = (S.hq || "").trim().toLowerCase();
-  const rows = D.holders.filter(h => !q || [h.Surname, h.GivenNames, h.Phone, h.Email].some(v => String(v || "").toLowerCase().includes(q))
+  const rows = D.holders.filter(h => !q || [h.Surname, h.GivenNames, h.MiddleName, h.Phone, h.Email].some(v => String(v || "").toLowerCase().includes(q))
       || D.licences.some(l => l.HolderRef === h.ClientRef && [l.Title, l.SerialNo].some(v => String(v || "").toLowerCase().includes(q))))
     .sort((a, b) => String(a.Surname || "").localeCompare(String(b.Surname || "")) || String(a.GivenNames || "").localeCompare(String(b.GivenNames || "")));
   $("#main").innerHTML = banners() + `
@@ -525,8 +527,9 @@ async function pageHolder() {
     <div class="cols">
       <div>
         <form class="card" id="mainForm" autocomplete="off"><h3>Licence holder</h3>
-          <div class="grid2"><label>Surname *<input type="text" name="Surname" value="${esc(h.Surname)}" ${dis}></label>
-            <label>Given names *<input type="text" name="GivenNames" value="${esc(h.GivenNames)}" ${dis}></label></div>
+          <div class="grid3"><label>Surname *<input type="text" name="Surname" value="${esc(h.Surname)}" ${dis}></label>
+            <label>First name *<input type="text" name="GivenNames" value="${esc(h.GivenNames)}" ${dis}></label>
+            <label>Middle name<input type="text" name="MiddleName" value="${esc(h.MiddleName)}" ${dis}></label></div>
           <div class="grid3"><label>Date of birth *<input type="date" name="DateOfBirth" value="${esc(String(h.DateOfBirth || "").slice(0, 10))}" ${dis}></label>
             <label>Sex<select name="Sex" ${dis}>${["", "M", "F", "X"].map(o => `<option ${o === (h.Sex || "") ? "selected" : ""}>${o}</option>`).join("")}</select></label>
             <label>Phone<input type="text" name="Phone" value="${esc(h.Phone)}" ${dis}></label></div>
@@ -536,8 +539,8 @@ async function pageHolder() {
         </form>
         <div class="card"><div class="bar"><h3 style="margin:0">Licences (one per firearm)</h3><span class="grow"></span>
             ${!ro && !isNew ? `<a class="btn primary sm" href="#/newlicence/${encodeURIComponent(ref)}">+ New licence</a>` : ""}</div>
-          ${isNew ? `<p class="muted small">Save the holder first, then add a licence for each firearm.</p>` : ls.length ? `<table><thead><tr><th>Licence no</th><th>Firearm</th><th>Purpose</th><th>Expires</th><th>Status</th><th>Printed</th></tr></thead><tbody>
-            ${ls.map(l => `<tr class="go" data-l="${esc(l.ClientRef)}"><td class="mono"><b>${esc(l.Title)}</b></td><td>${esc(gunText(l))}</td><td title="${esc(purposeName(l.Purpose))}">${esc(l.Purpose)}</td>
+          ${isNew ? `<p class="muted small">Save the holder first, then add a licence for each firearm.</p>` : ls.length ? `<table><thead><tr><th>Licence no</th><th>Firearm</th><th>Class</th><th>Purpose</th><th>Expires</th><th>Status</th><th>Printed</th></tr></thead><tbody>
+            ${ls.map(l => `<tr class="go" data-l="${esc(l.ClientRef)}"><td class="mono"><b>${esc(l.Title)}</b></td><td>${esc(gunText(l))}</td><td title="${esc(className(l.Class))}">${esc(l.Class)}</td><td title="${esc(purposeName(l.Purpose))}">${esc(l.Purpose)}</td>
               <td>${fmtDate(l.ExpiryDate)}</td><td><span class="tag ${STATUS_TAG[statusOf(l)] || ""}">${statusOf(l)}</span>${l._pending ? ` <span class="tag info">waiting</span>` : ""}</td><td>${l.LastPrinted ? fmtDate(l.LastPrinted) : "—"}</td></tr>`).join("")}</tbody></table>`
             : `<p class="muted small">No licences yet.</p>`}</div>
         ${!isNew ? `<div class="card"><h3>History</h3><div id="hist" class="small muted">${online() ? "Loading…" : "History shows when you're online."}</div></div>` : ""}
@@ -581,9 +584,9 @@ async function pageHolder() {
   const saveBtn = $("#saveBtn");
   if (saveBtn) saveBtn.onclick = async () => {
     const f = val();
-    const missing = [["Surname", "Surname"], ["GivenNames", "Given names"], ["DateOfBirth", "Date of birth"]].filter(([k]) => !f[k]).map(x => x[1]);
+    const missing = [["Surname", "Surname"], ["GivenNames", "First name"], ["DateOfBirth", "Date of birth"]].filter(([k]) => !f[k]).map(x => x[1]);
     if (missing.length) return toast("Please fill in: " + missing.join(", "));
-    const twin = D.holders.find(x => x.ClientRef !== ref && norm(x.Surname) === norm(f.Surname) && norm(x.GivenNames) === norm(f.GivenNames) && String(x.DateOfBirth || "").slice(0, 10) === f.DateOfBirth);
+    const twin = D.holders.find(x => x.ClientRef !== ref && norm(x.Surname) === norm(f.Surname) && norm(firstNames(x)) === norm(firstNames(f)) && String(x.DateOfBirth || "").slice(0, 10) === f.DateOfBirth);
     if (twin && !confirm(`${fullName(twin)}, born ${fmtDate(twin.DateOfBirth)}, is already a holder. Add another licence to that person instead of creating a second one?\n\nOK = go to that person · Cancel = save this one anyway`)) {
       /* save anyway */ } else if (twin) { S.dirty = false; location.hash = "#/holder/" + encodeURIComponent(twin.ClientRef); return; }
     if (isNew) f.CapturedBy = me();
@@ -648,7 +651,8 @@ async function pageLicence() {
           <div class="grid3"><label>Issued *<input type="date" name="IssueDate" value="${esc(String(l.IssueDate || "").slice(0, 10))}" ${dis}></label>
             <label>Expires *<input type="date" name="ExpiryDate" value="${esc(String(l.ExpiryDate || "").slice(0, 10))}" ${dis}></label>
             <label>Status<select name="LicenceStatus" ${dis}>${opt(CHOICES.STATUSES, l.LicenceStatus || "Active")}</select></label></div>
-          <div class="grid2"><label>Licence type *<select name="LicenceType" ${dis}>${opt(CHOICES.LICENCE_TYPES, l.LicenceType)}</select></label>
+          <div class="grid3"><label>Class * (not printed)<select name="Class" ${dis}>${codeOptions(CLASS_LIST, l.Class || "")}</select></label>
+            <label>Licence type *<select name="LicenceType" ${dis}>${opt(CHOICES.LICENCE_TYPES, l.LicenceType)}</select></label>
             <label>Model (not printed)<input type="text" name="Model" value="${esc(l.Model)}" ${dis}></label></div>
           <label>Notes (not printed)<textarea name="Notes" ${dis}>${esc(l.Notes)}</textarea></label>
         </form>
@@ -727,7 +731,7 @@ async function pageLicence() {
   const saveBtn = $("#saveBtn");
   if (saveBtn) saveBtn.onclick = async () => {
     const f = val();
-    const missing = [["Title", "Licence no"], ["LicenceType", "Licence type"], ["Purpose", "Purpose"], ["IssueDate", "Issued"], ["ExpiryDate", "Expires"], ["SerialNo", "Serial no"]].filter(([k]) => !f[k]).map(x => x[1]);
+    const missing = [["Title", "Licence no"], ["Class", "Class"], ["LicenceType", "Licence type"], ["Purpose", "Purpose"], ["IssueDate", "Issued"], ["ExpiryDate", "Expires"], ["SerialNo", "Serial no"]].filter(([k]) => !f[k]).map(x => x[1]);
     if (missing.length) return toast("Please fill in: " + missing.join(", "));
     if (f.ExpiryDate < f.IssueDate) return toast("The expiry date is before the issue date");
     const dup = D.licences.find(x => x.ClientRef !== ref && norm(x.Title) === norm(f.Title));
@@ -764,6 +768,13 @@ async function pageLicence() {
 /* Purpose codes: stored and printed as the letter ("B"), shown with its meaning ("B - Self Protection") */
 const PURPOSE_LIST = (CHOICES.PURPOSES || []).map(p => Array.isArray(p) ? p : [p, p]);
 const purposeName = code => (PURPOSE_LIST.find(p => p[0] === code) || [])[1] || "";
+const CLASS_LIST = (CHOICES.CLASSES || []).map(p => Array.isArray(p) ? p : [p, p]);
+const className = code => (CLASS_LIST.find(p => p[0] === code) || [])[1] || "";
+function codeOptions(list, cur) {
+  const known = list.some(p => p[0] === cur);
+  return `<option value="">-</option>` + list.map(([c, n]) => `<option value="${esc(c)}" ${c === cur ? "selected" : ""}>${esc(c === n ? c : c + " - " + n)}</option>`).join("")
+    + (cur && !known ? `<option value="${esc(cur)}" selected>${esc(cur)} (old value - please choose)</option>` : "");
+}
 function purposeOptions(cur) {
   const known = PURPOSE_LIST.some(p => p[0] === cur);
   return `<option value="">-</option>` + PURPOSE_LIST.map(([c, n]) => `<option value="${esc(c)}" ${c === cur ? "selected" : ""}>${esc(c === n ? c : c + " - " + n)}</option>`).join("")
@@ -778,7 +789,7 @@ async function bgFor(b, orientation = "Landscape") {
 }
 /* Holder + licence -> the field names the card layouts use */
 function cardData(h, l) {
-  return { ...h, ...l, LicenceNo: l.Title, Registrar: BRAND.REGISTRAR || "" };
+  return { ...h, ...l, GivenNames: firstNames(h), LicenceNo: l.Title, Registrar: BRAND.REGISTRAR || "" };   // middle name prints after the first name
 }
 async function queuePhoto(h, blob, withFace) {
   const now = new Date(), stamp = `${ymd(now).replace(/-/g, "")}-${hhmm(now).replace(":", "")}${String(now.getSeconds()).padStart(2, "0")}`;
@@ -825,7 +836,7 @@ async function convertOldRecords() {
   const old = D.licences.filter(l => !l.HolderRef && (l.Surname || l.GivenNames) && !D.licences.some(x => x !== l && x.HolderRef === l.ClientRef));
   for (const o of old) {
     const hf = {};
-    ["Surname", "GivenNames", "DateOfBirth", "Sex", "Address", "Phone", "Email", "PhotoUrl", "PhotoItemId", "PhotoDate",
+    ["Surname", "GivenNames", "MiddleName", "DateOfBirth", "Sex", "Address", "Phone", "Email", "PhotoUrl", "PhotoItemId", "PhotoDate",
      "FaceId", "FaceStatus", "FaceNote", "FaceDate", "CapturedBy"].forEach(k => { if (o[k] != null && o[k] !== "") hf[k] = o[k]; });
     hf.Title = fullName(hf);
     if (!holder(o.ClientRef)) {

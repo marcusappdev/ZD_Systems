@@ -56,6 +56,10 @@ const ZD_BRAND = {
 const ZD_CHOICES = {
   LICENCE_TYPES: ["Shooter", "Collector", "Club member", "Security", "Dealer"],
   FIREARM_TYPES: ["Rifle", "Shotgun", "Handgun", "Other"],
+  // Class codes as printed on the back of the PNG Firearm Licence card (kept on record, not printed).
+  CLASSES: [
+    ["A", ".22 and Air Rifle"], ["B", "All Shotguns"], ["C", "All Pistols"], ["D", "All Other Rifles"], ["E", "Other"]
+  ],
   // Purpose codes as printed on the back of the PNG Firearm Licence card.
   // The card's front prints only the letter.
   PURPOSES: [
