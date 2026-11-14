@@ -5,7 +5,7 @@
 #    1. Creates the site /sites/ZD_POC (private, no Microsoft 365 group)
 #       - skipped if it exists
 #    2. Creates the lists:  ZD_Holders, ZD_Licences, ZD_Firearms (old), ZD_Staff, ZD_Activity, ZD_Codes
-#    3. Creates the two picture libraries:  ZD_LicencePhotos, ZD_CardBackgrounds
+#    3. Creates the libraries:  ZD_LicencePhotos, ZD_CardBackgrounds, ZD_Documents
 #    4. Creates the SharePoint group "ZD Licensing Office" with Edit rights
 #       and adds you to it
 #    No other site, list or group is touched.
@@ -140,11 +140,20 @@ Ensure-Field $A "HolderRef" "Text" -Indexed
 Ensure-Field $A "ClientRef" "Text" -Indexed
 
 # ---------------------------------------------------------------------
-Pause-Step "STEP 3 of 4 - Create the picture libraries ${Prefix}LicencePhotos and ${Prefix}CardBackgrounds"
+Pause-Step "STEP 3 of 4 - Create the libraries ${Prefix}LicencePhotos, ${Prefix}CardBackgrounds and ${Prefix}Documents"
 Ensure-List "${Prefix}LicencePhotos" "DocumentLibrary" "Licence holders' photos (one folder per licence)"
 $B = "${Prefix}CardBackgrounds"
 Ensure-List $B "DocumentLibrary" "ID card background pictures. Best size 1012 x 638 px (or 638 x 1012 upright)"
 foreach ($c in "Orientation","TextColour","ShowHeader","Active","TextPanel","Layout","Preprinted") { Ensure-Field $B $c "Text" }
+
+# Documents attached to a licence holder or to one of their licences (a folder per holder)
+$DocLib = "${Prefix}Documents"
+Ensure-List $DocLib "DocumentLibrary" "Documents attached to licence holders and their licences (ZD Licensing app)"
+foreach ($c in "DocType","DocDate","HolderName","LicenceNo","OriginalName","UploadedBy","UploadedAt") { Ensure-Field $DocLib $c "Text" }
+Ensure-Field $DocLib "DocDescription" "Note"
+Ensure-Field $DocLib "HolderRef" "Text" -Indexed
+Ensure-Field $DocLib "LicenceRef" "Text" -Indexed
+Ensure-Field $DocLib "ClientRef" "Text" -Indexed
 
 # ---------------------------------------------------------------------
 Pause-Step "STEP 4 of 4 - Create the SharePoint group '$OfficeGroup' (Edit rights) and add you"
