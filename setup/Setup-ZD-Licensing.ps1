@@ -4,7 +4,7 @@
 #  WHAT IT DOES (it pauses before each step - press Enter to go on):
 #    1. Creates the site /sites/ZD_POC (private, no Microsoft 365 group)
 #       - skipped if it exists
-#    2. Creates the lists:  ZD_Holders, ZD_Licences, ZD_Firearms (old), ZD_Staff, ZD_Activity
+#    2. Creates the lists:  ZD_Holders, ZD_Licences, ZD_Firearms (old), ZD_Staff, ZD_Activity, ZD_Codes
 #    3. Creates the two picture libraries:  ZD_LicencePhotos, ZD_CardBackgrounds
 #    4. Creates the SharePoint group "ZD Licensing Office" with Edit rights
 #       and adds you to it
@@ -83,7 +83,7 @@ function Set-TitleName($list, $label) {
 }
 
 # ---------------------------------------------------------------------
-Pause-Step "STEP 2 of 4 - Create the lists ${Prefix}Holders, ${Prefix}Licences, ${Prefix}Firearms, ${Prefix}Staff, ${Prefix}Activity"
+Pause-Step "STEP 2 of 4 - Create the lists ${Prefix}Holders, ${Prefix}Licences, ${Prefix}Firearms, ${Prefix}Staff, ${Prefix}Activity, ${Prefix}Codes"
 # Dates are stored as plain text YYYY-MM-DD (no time-zone shift), like the other Hubs.
 
 # Licence holders (the people). Photo and face record belong here.
@@ -120,6 +120,15 @@ Ensure-List $S "GenericList" "Who can use ZD Licensing, and their role (Admin, O
 Set-TitleName $S "Name"
 foreach ($c in "Email","HubRole","StaffStatus") { Ensure-Field $S $c "Text" }
 Ensure-Field $S "ClientRef" "Text" -Indexed
+
+# Class, Purpose and Type codes - kept by Admins on the app's Codes page
+$CodesList = "${Prefix}Codes"
+Ensure-List $CodesList "GenericList" "Class, Purpose and firearm Type codes offered on the licence form (ZD Licensing app)"
+Set-TitleName $CodesList "Code"
+foreach ($c in "Description","Active") { Ensure-Field $CodesList $c "Text" }
+Ensure-Field $CodesList "SortOrder" "Number"
+Ensure-Field $CodesList "CodeSet" "Text" -Indexed
+Ensure-Field $CodesList "ClientRef" "Text" -Indexed
 
 $A = "${Prefix}Activity"
 Ensure-List $A "GenericList" "Activity log - sign-ins, licence changes, photos, cards printed"
