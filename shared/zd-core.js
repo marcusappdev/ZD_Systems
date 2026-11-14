@@ -252,10 +252,11 @@ const KNOWN_IDS = new Map();                    // list|ClientRef -> SharePoint 
 
 async function sendOp(op) {
   if (op.kind === "face") {
+    // a holder's face (op.list = holders, the default) or a licence-to-carry carrier's (op.list = licences)
     const r = await faceCall({ action: "licenseeEnrol", ref: op.ref, image: await blobToB64(op.file.blob) });
     const f = { ClientRef: op.ref, FaceId: r.faceId || "", FaceStatus: r.duplicates?.length ? "Check" : "Enrolled",
       FaceNote: r.duplicates?.length ? "Same face as holder(s): " + r.duplicates.map(d => `${d.ref} (${d.similarity}%)`).join(", ") : "", FaceDate: today() };
-    return sendOp({ kind: "upsert", list: LISTS.holders, ref: op.ref, fields: f });
+    return sendOp({ kind: "upsert", list: op.list || LISTS.holders, ref: op.ref, fields: f });
   }
   if (op.kind === "doc") return sendDoc(op);
   const f = { ...op.fields, ClientRef: op.fields.ClientRef || op.ref };   // a converted row may take a new ClientRef

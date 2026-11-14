@@ -86,12 +86,14 @@ function Set-TitleName($list, $label) {
 Pause-Step "STEP 2 of 4 - Create the lists ${Prefix}Holders, ${Prefix}Licences, ${Prefix}Firearms, ${Prefix}Staff, ${Prefix}Activity, ${Prefix}Codes"
 # Dates are stored as plain text YYYY-MM-DD (no time-zone shift), like the other Hubs.
 
-# Licence holders (the people). Photo and face record belong here.
+# Licence holders - a person, or a company (with its owner / CEO). Photo and face record belong here.
 $H = "${Prefix}Holders"
 Ensure-List $H "GenericList" "Licence holders - one row per person (ZD Licensing app)"
 Set-TitleName $H "Name"
 foreach ($c in "Surname","GivenNames","MiddleName","DateOfBirth","Sex","Phone","Email","PhotoItemId","PhotoDate",
                "FaceId","FaceStatus","FaceDate","CapturedBy") { Ensure-Field $H $c "Text" }
+# Company holders: the company's details (the person fields hold its owner / CEO)
+foreach ($c in "HolderKind","CompanyName","CompanyRegNo","RepRole") { Ensure-Field $H $c "Text" }
 foreach ($c in "Address","Notes","PhotoUrl","FaceNote") { Ensure-Field $H $c "Note" }
 Ensure-Field $H "ClientRef" "Text" -Indexed
 
@@ -105,6 +107,10 @@ foreach ($c in "Surname","GivenNames","DateOfBirth","Sex","Phone","Email","Licen
 foreach ($c in "Address","Notes","PhotoUrl","FaceNote") { Ensure-Field $L $c "Note" }
 Ensure-Field $L "PrintCount" "Number"
 foreach ($c in "SerialNo","Make","Model","FirearmType","Calibre","Purpose","Class","BarcodeNo") { Ensure-Field $L $c "Text" }
+# Licences to carry (LTC): the person carrying one of the company's firearms
+foreach ($c in "CarrierSurname","CarrierGivenNames","CarrierMiddleName","CarrierDOB","CarrierSex","CarrierPhone") { Ensure-Field $L $c "Text" }
+Ensure-Field $L "CarrierAddress" "Note"
+Ensure-Field $L "CarryForRef" "Text" -Indexed
 Ensure-Field $L "HolderRef" "Text" -Indexed
 Ensure-Field $L "ClientRef" "Text" -Indexed
 
