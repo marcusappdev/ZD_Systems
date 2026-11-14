@@ -104,7 +104,7 @@ foreach ($c in "Surname","GivenNames","DateOfBirth","Sex","Phone","Email","Licen
                "CardBackground","CardOrientation","LastPrinted","CapturedBy") { Ensure-Field $L $c "Text" }
 foreach ($c in "Address","Notes","PhotoUrl","FaceNote") { Ensure-Field $L $c "Note" }
 Ensure-Field $L "PrintCount" "Number"
-foreach ($c in "SerialNo","Make","Model","FirearmType","Calibre","Purpose","Class") { Ensure-Field $L $c "Text" }
+foreach ($c in "SerialNo","Make","Model","FirearmType","Calibre","Purpose","Class","BarcodeNo") { Ensure-Field $L $c "Text" }
 Ensure-Field $L "HolderRef" "Text" -Indexed
 Ensure-Field $L "ClientRef" "Text" -Indexed
 

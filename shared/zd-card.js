@@ -45,7 +45,7 @@
     return min;
   }
 
-  const FONT = '"Segoe UI", Arial, Helvetica, sans-serif';
+  const FONT = '"Segoe UI", Arial, Helvetica, sans-serif', FONT_UI = FONT;
 
   function layout(orientation, showHeader) {
     const { w, h } = SIZE[orientation] || SIZE.Landscape;
@@ -119,6 +119,65 @@
     }
   };
 
+  /* LEGACY two-sided PNG Firearm Licence (until the hologram card replaces it).
+     The front and back artwork (red border, titles, labels, embossed crest; class and
+     purpose codes) are background pictures in SharePoint; only the details, the photo
+     and the barcode are drawn here. Measured from the old cards; Arial-style lettering. */
+  const ARIAL = '"Arial", "Liberation Sans", Helvetica, sans-serif';
+  LAYOUTS["PNG Firearm Licence (legacy)"] = {
+    orientation: "Landscape", back: "PNG Firearm Licence (legacy) - back", font: ARIAL, weight: 700,
+    photo: { x: 60, y: 66, w: 390, h: 372, radius: 0 },      // left, above "SN"
+    size: 28,
+    fields: [
+      { key: "LicenceNo",   x: 563, y: 133, max: 300, size: 46 },                     // after "No:", large
+      { key: "GivenNames",  x: 481, y: 250, max: 205, upper: true },                  // under "First Name"
+      { key: "Surname",     x: 694, y: 250, max: 225, upper: true },                  // under "Last Name"
+      { key: "Address",     x: 595, y: 298, max: 320, size: 26, lines: 3, lineHeight: 34, keepLines: true, upper: true },
+      { key: "Make",        x: 481, y: 446, max: 290, upper: true },                  // under "Make"
+      { key: "FirearmType", x: 782, y: 446, max: 140, upper: true },                  // under "Type"
+      { key: "SerialNo",    x: 124, y: 489, max: 320, size: 36 },                     // after "SN", large
+      { key: "Registrar",   x: 172, y: 526, max: 260, size: 24 },                     // after "Registrar"
+      { key: "Calibre",     x: 478, y: 543, max: 150, upper: true },                  // under "Calibre"
+      { key: "Purpose",     x: 681, y: 543, max: 110, align: "center", size: 30 },    // under "Purpose" - the code letter
+      { key: "ExpiryDate",  x: 780, y: 543, max: 138, dateSep: "-" }                  // under "Expiry Date", 30-06-2027
+    ]
+  };
+  LAYOUTS["PNG Firearm Licence (legacy) - back"] = {
+    orientation: "Landscape", isBack: true, photo: null, fields: [],
+    // Code 128 barcode running down the right-hand edge, as on the old cards
+    barcode: { key: "BarcodeNo", x: 932, y: 70, w: 56, h: 520, vertical: true }
+  };
+
+  /* ---------------- Code 128 (set B) barcode ---------------- */
+  const C128 = ("212222 222122 222221 121223 121322 131222 122213 122312 132212 221213 221312 231212 112232 122132 122231 113222 " +
+    "123122 123221 223211 221132 221231 213212 223112 312131 311222 321122 321221 312212 322112 322211 212123 212321 232121 " +
+    "111323 131123 131321 112313 132113 132311 211313 231113 231311 112133 112331 132131 113123 113321 133121 313121 211331 " +
+    "231131 213113 213311 213131 311123 311321 331121 312113 312311 332111 314111 221411 431111 111224 111422 121124 121421 " +
+    "141122 141221 112214 112412 122114 122411 142112 142211 241211 221114 413111 241112 134111 111242 121142 121241 114212 " +
+    "124112 124211 411212 421112 421211 212141 214121 412121 111143 111341 131141 114113 114311 411113 411311 113141 114131 " +
+    "311141 411131 211412 211214 211232 2331112").split(" ");
+  /* Bar/space widths (in modules) for text, quiet zones not included. */
+  function code128(text) {
+    const t = String(text);
+    for (const ch of t) { const c = ch.charCodeAt(0); if (c < 32 || c > 126) throw new Error("Barcode can only hold plain letters, digits and punctuation"); }
+    const vals = [104, ...[...t].map(ch => ch.charCodeAt(0) - 32)];
+    const check = vals.reduce((sum, v, i) => sum + v * (i || 1), 0) % 103;
+    return [...vals, check, 106].map(v => C128[v]).join("").split("").map(Number);
+  }
+  function drawBarcode(ctx, B, text) {
+    if (!text) return;
+    const widths = code128(text), modules = widths.reduce((a, b) => a + b, 0) + 20;   // + 10-module quiet zone each end
+    const unit = Math.max(1, Math.floor((B.vertical ? B.h : B.w) / modules));         // whole pixels: crisp bars
+    const run = modules * unit;
+    let pos = (B.vertical ? B.y + (B.h - run) / 2 : B.x + (B.w - run) / 2) + 10 * unit, bar = true;
+    ctx.save(); ctx.fillStyle = "#000000";
+    for (const w of widths) {
+      if (bar) B.vertical ? ctx.fillRect(B.x, pos, B.w, w * unit) : ctx.fillRect(pos, B.y, w * unit, B.h);
+      pos += w * unit; bar = !bar;
+    }
+    ctx.restore();
+  }
+
   function wrapLines(ctx, text, max, lines) {
     const words = String(text).replace(/\s*[\r\n]+\s*/g, ", ").split(/\s+/).filter(Boolean), out = [];
     let cur = "";
@@ -133,32 +192,39 @@
   }
 
   function drawTemplate(ctx, T, lic, photo, light) {
-    const P = T.photo;
-    if (photo) {
-      ctx.save(); roundRect(ctx, P.x, P.y, P.w, P.h, 8); ctx.clip();
+    const P = T.photo, FONT = T.font || FONT_UI, W8 = T.weight || 700;
+    if (photo && P) {
+      ctx.save(); roundRect(ctx, P.x, P.y, P.w, P.h, P.radius ?? 8); ctx.clip();
       const iw = photo.naturalWidth || photo.width, ih = photo.naturalHeight || photo.height;
       const c = coverRect(iw, ih, P.w, P.h);
       ctx.drawImage(photo, c.sx, c.sy, c.sw, c.sh, P.x, P.y, P.w, P.h);
       ctx.restore();
     }
-    ctx.textAlign = "left"; ctx.fillStyle = light ? "#ffffff" : "#111418";
+    ctx.fillStyle = light ? "#ffffff" : "#111418";
     for (const f of T.fields) {
       let v = String(lic[f.key] ?? "").trim();
       if (!v) continue;
-      if (isDate(f.key)) v = dmy(v);
+      if (isDate(f.key)) v = f.dateSep ? dmy(v).replace(/\//g, f.dateSep) : dmy(v);
       if (f.upper) v = v.toUpperCase();
       const size = f.size || T.size;
+      ctx.textAlign = f.align || "left";
       if (f.lines > 1) {
-        ctx.font = `600 ${size}px ${FONT}`;
-        wrapLines(ctx, v, f.max, f.lines).forEach((line, i) => {
-          fitFont(ctx, line, 600, size, 14, f.max, FONT);
+        const weight = T.weight ? W8 : 600;
+        ctx.font = `${weight} ${size}px ${FONT}`;
+        // keepLines: the address prints line by line as typed (PO BOX 703 / ALOTAU / MBP)
+        let lines = f.keepLines ? v.split(/\s*[\r\n]+\s*/).filter(Boolean) : null;
+        if (!lines || lines.length > f.lines) lines = wrapLines(ctx, v, f.max, f.lines);
+        lines.forEach((line, i) => {
+          fitFont(ctx, line, weight, size, 14, f.max, FONT);
           ctx.fillText(line, f.x, f.y + i * (f.lineHeight || size + 6));
         });
       } else {
-        fitFont(ctx, v, 700, size, 14, f.max, FONT);
+        fitFont(ctx, v, W8, size, 14, f.max, FONT);
         ctx.fillText(v, f.x, f.y);
       }
     }
+    ctx.textAlign = "left";
+    if (T.barcode) drawBarcode(ctx, T.barcode, String(lic[T.barcode.key] ?? "").trim());
   }
 
   function roundRect(ctx, x, y, w, h, r) {
@@ -257,36 +323,40 @@
     return canvas;
   }
 
-  /* Print one card through the browser to the card printer.
-     The page is exactly card size with no margins; the image is made a
-     little bigger than the card ("bleed") and can be nudged, so small
-     printer offsets don't leave a white edge.
-       settings = { bleedMm: 0.5, offsetXmm: 0, offsetYmm: 0 } */
-  function printCard(canvas, settings) {
-    const s = Object.assign({ bleedMm: 0.5, offsetXmm: 0, offsetYmm: 0 }, settings || {});
-    const portrait = canvas.height > canvas.width;
+  /* Print a card through the browser to the card printer: one page per side
+     (front, then back for two-sided cards). Each page is exactly card size with no
+     margins; the picture is made a little bigger than the card ("bleed") and can be
+     nudged, so small printer offsets don't leave a white edge.
+       canvases = one canvas, or [front, back]
+       settings = { bleedMm: 0.5, offsetXmm: 0, offsetYmm: 0, rotateBack: false } */
+  function printCard(canvases, settings) {
+    const list = Array.isArray(canvases) ? canvases : [canvases];
+    const s = Object.assign({ bleedMm: 0.5, offsetXmm: 0, offsetYmm: 0, rotateBack: false }, settings || {});
+    const portrait = list[0].height > list[0].width;
     const W = portrait ? CARD_MM.h : CARD_MM.w, H = portrait ? CARD_MM.w : CARD_MM.h;
     const b = Math.max(0, Math.min(3, +s.bleedMm || 0));
-    const png = canvas.toDataURL("image/png");
-    // The picture is "fixed", so it takes up no room on the page: the printout
-    // is always exactly ONE card, even when the printer's card size is a hair
-    // smaller than ours (ISO ID-1 is 85.60 x 53.98 mm).
+    // Each page box is a hair (0.1 mm) shorter than the card, so a printer whose card is
+    // 53.98 mm never pushes a side onto an extra, blank card.
+    const pages = list.map((c, i) => `<div class="p"><img src="${c.toDataURL("image/png")}"${i > 0 && s.rotateBack ? ' class="r"' : ""}></div>`).join("");
     const html = `<!doctype html><html><head><title>Card</title><style>
       @page{size:${W}mm ${H}mm;margin:0}
-      html,body{margin:0;padding:0;width:0;height:0;overflow:hidden}
-      img{position:fixed;display:block;width:${W + 2 * b}mm;height:${H + 2 * b}mm;
+      html,body{margin:0;padding:0}
+      .p{position:relative;width:${W}mm;height:${(H - 0.1).toFixed(2)}mm;overflow:hidden;break-after:page;page-break-after:always}
+      .p:last-child{break-after:auto;page-break-after:auto}
+      img{position:absolute;display:block;width:${W + 2 * b}mm;height:${H + 2 * b}mm;
           left:${-b + (+s.offsetXmm || 0)}mm;top:${-b + (+s.offsetYmm || 0)}mm}
-      </style></head><body><img src="${png}"></body></html>`;
+      img.r{transform:rotate(180deg)}
+      </style></head><body>${pages}</body></html>`;
     const f = document.createElement("iframe");
     f.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0";
     document.body.appendChild(f);
     const d = f.contentWindow.document; d.open(); d.write(html); d.close();
-    const img = d.querySelector("img");
+    const imgs = [...d.querySelectorAll("img")];
     const go = () => { f.contentWindow.focus(); f.contentWindow.print(); setTimeout(() => f.remove(), 60000); };
-    if (img.complete) setTimeout(go, 50); else img.onload = go;
+    Promise.all(imgs.map(i => i.complete ? 0 : new Promise(r => { i.onload = r; i.onerror = r; }))).then(() => setTimeout(go, 50));
   }
 
-  const api = { DPI, MM, CARD_MM, SIZE, LAYOUTS, coverRect, layout, drawCard, printCard, dmy, fitFont, wrapLines };
+  const api = { DPI, MM, CARD_MM, SIZE, LAYOUTS, coverRect, layout, drawCard, printCard, dmy, fitFont, wrapLines, code128, drawBarcode };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.ZDCard = api;
 })(typeof window !== "undefined" ? window : globalThis);

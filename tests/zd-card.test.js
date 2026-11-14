@@ -74,3 +74,19 @@ test("long addresses wrap onto two lines at most", () => {
   assert.equal(lines.length, 2);
   assert.ok(lines[0].length * 10 <= 300);
 });
+
+test("Code 128 barcode: right structure and check digit for the old card's value", () => {
+  const w = C.code128("GLCS2020-076240");
+  // start + 15 characters + check = 17 symbols of 11 modules, stop = 13 modules
+  assert.equal(w.reduce((a, b) => a + b, 0), 17 * 11 + 13);
+  assert.deepEqual(w.slice(0, 6), [2, 1, 1, 2, 1, 4]);      // Start B
+  assert.deepEqual(w.slice(-7), [2, 3, 3, 1, 1, 1, 2]);     // Stop
+  assert.throws(() => C.code128("bad\u0001"));
+});
+
+test("legacy two-sided layout: front links to its back; everything stays on the card", () => {
+  const F = C.LAYOUTS["PNG Firearm Licence (legacy)"], B = C.LAYOUTS[F.back];
+  assert.ok(B && B.isBack && B.barcode);
+  for (const f of F.fields) assert.ok(f.x >= 50 && f.x + (f.align === "center" ? f.max / 2 : f.max) <= 930 && f.y <= 575, f.key);
+  assert.ok(B.barcode.x + B.barcode.w <= 1012 && B.barcode.y + B.barcode.h <= 638);
+});
