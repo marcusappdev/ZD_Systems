@@ -409,6 +409,8 @@ function renderWho() {
 window.addEventListener("online", () => { renderWho(); });
 window.addEventListener("offline", () => { renderWho(); });
 
+/* Something on the page has changed: "Save changes" appears only now */
+function markDirty() { S.dirty = true; const b = $("#saveBtn"); if (b) b.hidden = false; }
 function route(quiet) {
   const parts = location.hash.replace(/^#\/?/, "").split("/");
   const next = parts[0] || "";
@@ -428,7 +430,7 @@ function route(quiet) {
   if (keep) setTimeout(() => {
     const f = $("#mainForm"); if (!f) return;
     keep.forEach(([k, v]) => { if (f.elements[k]) f.elements[k].value = v; });
-    S.dirty = true; f.dispatchEvent(new Event("input"));
+    markDirty(); f.dispatchEvent(new Event("input"));
   });
   const allowed = { "": true, firearms: true, holders: true, holder: true, licence: true, newholder: canEdit(), newlicence: canEdit(), face: canEdit(), backgrounds: isAdmin(), codes: isAdmin(), staff: isAdmin(), settings: true };
   if (!allowed[next]) { location.hash = "#/"; return; }
@@ -539,7 +541,7 @@ async function pageHolder() {
     <div class="bar"><a href="#/" class="btn sm">← Licence Holders</a><h2>${isNew ? "New licence holder" : esc(fullName(h))}</h2>
       ${!isNew ? faceTag(h) : ""}${h._pending ? ` <span class="tag info">waiting to send</span>` : ""}<span class="grow"></span>
       ${isAdmin() && !isNew && !ls.length ? `<button class="btn danger" id="delHolder" title="Remove this holder (Admin only; only when they have no licensed firearms)">Delete holder</button>` : ""}
-      ${ro ? "" : `<button class="btn primary" id="saveBtn">${isNew ? "Save holder" : "Save changes"}</button>`}</div>
+      ${ro ? "" : `<button class="btn primary" id="saveBtn" ${isNew || S.dirty ? "" : "hidden"}>${isNew ? "Save holder" : "Save changes"}</button>`}</div>
     <div class="cols">
       <div>
         <form class="card" id="mainForm" autocomplete="off"><h3>Licence holder</h3>
@@ -577,7 +579,7 @@ async function pageHolder() {
       </div>
     </div>`;
   const form = $("#mainForm");
-  form.oninput = () => { S.dirty = true; };
+  form.oninput = markDirty;
   if (!isNew) wireDocs(h, null);
   const val = () => Object.fromEntries([...new FormData(form)].map(([k, v]) => [k, String(v).trim()]));
   const showPhoto = async () => {
@@ -589,7 +591,7 @@ async function pageHolder() {
   if (photoBtn) photoBtn.onclick = async () => {
     const blob = await takeLicencePhoto(); if (!blob) return;
     const withFace = $("#faceOpt").checked;
-    if (isNew) { DRAFT_PHOTO = blob; S.dirty = true; S.draftFace = withFace; showPhoto(); return; }
+    if (isNew) { DRAFT_PHOTO = blob; markDirty(); S.draftFace = withFace; showPhoto(); return; }
     await queuePhoto(h, blob, withFace); toast("Photo saved" + (online() ? "" : " on this device - it will be sent when you're online"));
     route(true);
   };
@@ -681,7 +683,7 @@ async function pageLicence() {
       <h2>${isNew ? "Add licensed firearm" : "Licensed firearm · Lic No " + esc(l.Title)}</h2>
       ${!isNew ? `<span class="tag ${STATUS_TAG[statusOf(l)] || ""}">${statusOf(l)}</span>` : ""}${l._pending ? ` <span class="tag info">waiting to send</span>` : ""}<span class="grow"></span>
       ${isAdmin() && !isNew ? `<button class="btn danger" id="delBtn" title="Remove this licence from the register (Admin only)">Delete licence</button>` : ""}
-      ${ro ? "" : `<button class="btn primary" id="saveBtn">${isNew ? "Save licence" : "Save changes"}</button>`}</div>
+      ${ro ? "" : `<button class="btn primary" id="saveBtn" ${isNew || S.dirty ? "" : "hidden"}>${isNew ? "Save licence" : "Save changes"}</button>`}</div>
     <div class="cols">
       <div>
         <div class="card"><h3>Licence holder</h3><div class="photo-box">
@@ -723,7 +725,7 @@ async function pageLicence() {
     </div>`;
 
   const form = $("#mainForm");
-  form.oninput = () => { S.dirty = true; schedulePreview(); };
+  form.oninput = () => { markDirty(); schedulePreview(); };
   if (!isNew) wireDocs(h, l);
   const val = () => Object.fromEntries([...new FormData(form)].map(([k, v]) => [k, String(v).trim()]));
   const issueEl = form.elements.IssueDate, expEl = form.elements.ExpiryDate;
@@ -773,7 +775,7 @@ async function pageLicence() {
       const k = b.dataset.bg, meta = D.backgrounds.find(x => x.fileId === k);
       S.card = meta ? { ref, bg: k, orientation: meta.Orientation || "Landscape" } : { ref, bg: "", orientation: k.split("-")[1] };
       $$("[data-bg]").forEach(x => x.classList.toggle("on", x === b));
-      S.dirty = true; drawPreview();
+      markDirty(); drawPreview();
     });
   }
   $("#pngBtn").onclick = async () => {
