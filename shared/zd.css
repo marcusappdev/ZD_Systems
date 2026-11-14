@@ -103,3 +103,14 @@ ul.plain{list-style:none;margin:0;padding:0}ul.plain li{padding:8px 0;border-bot
 .dropzone{border:2px dashed var(--field);border-radius:10px;padding:14px;text-align:center;color:var(--muted);font-size:13px;margin-bottom:12px;transition:background .15s,border-color .15s}
 .dropzone.over{border-color:var(--accent);background:#fdecec;color:var(--text)}
 table.docs td{vertical-align:top}
+
+/* holder kind: Individual / Company */
+.kindpick{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin:-4px 0 14px}
+.kindpick .chk{margin:0}
+#mainForm:not(.kind-company) .co-only{display:none}
+#mainForm.kind-company .ind-only{display:none}
+.subhead{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:14px 0 8px;font-weight:700}
+/* licence number with its prefix (C / LTC) in front */
+.pfx{display:flex;align-items:stretch}
+.pfx span{display:flex;align-items:center;padding:0 10px;background:#e7ebf0;border:1px solid var(--field);border-right:0;border-radius:8px 0 0 8px;font-family:ui-monospace,Consolas,monospace;font-weight:700}
+.pfx span + input{border-top-left-radius:0;border-bottom-left-radius:0}
