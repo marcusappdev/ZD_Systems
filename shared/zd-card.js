@@ -126,7 +126,7 @@
   const ARIAL = '"Arial", "Liberation Sans", Helvetica, sans-serif';
   LAYOUTS["PNG Firearm Licence (legacy)"] = {
     orientation: "Landscape", back: "PNG Firearm Licence (legacy) - back", font: ARIAL, weight: 700,
-    photo: { x: 60, y: 66, w: 390, h: 372, radius: 0 },      // left, above "SN"
+    photo: { x: 105, y: 66, w: 300, h: 372, radius: 0 },     // portrait like the photos (head and shoulders), centred left, above "SN"
     size: 28,
     fields: [
       { key: "LicenceNo",   x: 563, y: 133, max: 300, size: 46 },                     // after "No:", large

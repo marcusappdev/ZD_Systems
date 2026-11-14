@@ -448,6 +448,8 @@ function statusOf(l) {
 const STATUS_TAG = { Active: "ok", Expiring: "warn", Expired: "bad", Suspended: "bad", Cancelled: "bad" };
 /* "Same face as holder(s): ab12cd (99%)" -> with the holders' names */
 const faceNote = h => String(h?.FaceNote || "").replace(/\b([A-Za-z0-9]{12,40})\b/g, r => { const o = holder(r); return o ? fullName(o) : r; });
+/* References in a holder's face warning that no longer belong to anyone */
+const orphanFaces = h => h?.FaceStatus === "Check" ? [...String(h.FaceNote || "").matchAll(/\b([A-Za-z0-9]{12,40})\b(?= \()/g)].map(m => m[1]).filter(r => r !== h.ClientRef && !holder(r)) : [];
 const faceTag = h => ({ Enrolled: `<span class="tag ok">Face on file</span>`, Check: `<span class="tag bad" title="${esc(faceNote(h))}">Face: check</span>`,
   Failed: `<span class="tag warn" title="${esc(faceNote(h))}">Face failed</span>`, Waiting: `<span class="tag info">Face waiting</span>` })[h?.FaceStatus] || `<span class="tag">No face</span>`;
 const gunText = l => [l.SerialNo, [l.Make, l.Model].filter(Boolean).join(" "), l.FirearmType].filter(Boolean).join(" · ");
@@ -556,6 +558,7 @@ async function pageHolder() {
               <p class="small muted">The face record lets you find this person from a photo later, and warns if the same face is already on file under another name.</p>
               ${!isNew && (h.PhotoItemId || h._localKey) && !["Enrolled", "Waiting", "Check"].includes(h.FaceStatus) ? `<button class="btn sm" id="faceNow">Register face from this photo</button>` : ""}`}
             ${h.FaceNote ? `<p class="small" style="color:var(--bad)">${esc(faceNote(h))}</p>` : ""}
+            ${isAdmin() && orphanFaces(h).length ? `<button class="btn sm" id="clearOrphan" title="The matching face belongs to a holder who has been deleted">Clear - the other face belongs to a deleted holder</button>` : ""}
             ${h.PhotoDate ? `<p class="small muted">Photo taken ${fmtDate(h.PhotoDate)} · used on all of this person's cards</p>` : ""}
           </div></div></div>
       </div>
@@ -603,12 +606,26 @@ async function pageHolder() {
     toast(online() ? "Saved" : "Saved on this device - it will be sent when you're online");
     if (isNew) location.hash = "#/holder/" + encodeURIComponent(ref); else route(true);
   };
+  const clearOrphan = $("#clearOrphan");
+  if (clearOrphan) clearOrphan.onclick = async () => {
+    if (!online()) return toast("Needs an internet connection");
+    try {
+      for (const r of orphanFaces(h)) await faceCall({ action: "licenseeRemove", ref: r });
+      const f = { FaceStatus: "Enrolled", FaceNote: "" };
+      mergeLocal(LISTS.holders, ref, f);
+      await enqueue({ kind: "upsert", list: LISTS.holders, ref, fields: f, label: `Face check cleared · ${fullName(h)}` });
+      logActivity("Face check cleared", h, null, "matching face belonged to a deleted holder");
+      toast("Cleared"); route(true);
+    } catch (e) { toast(e.status === 403 ? "Only face-service administrators can do this" : e.message); }
+  };
   const delHolder = $("#delHolder");
   if (delHolder) delHolder.onclick = async () => {
     if (!online()) return toast("Deleting needs an internet connection");
     if (!confirm(`Delete licence holder ${fullName(h)}?\n\nThey have no licensed firearms. The record is removed from the register for good.`)) return;
     try {
       if (!String(h.id).startsWith("local-")) await deleteItem(LISTS.holders, h.id);
+      // their face record in AWS goes too, so it can't be mistaken for someone else later
+      if (!D.holders.some(x => x !== h && x.ClientRef === ref)) await faceCall({ action: "licenseeRemove", ref }).catch(e => console.warn("face record not removed", e));
       for (const op of (await qMine()).filter(o => (o.list === LISTS.holders || o.kind === "face") && o.ref === ref)) await qDel(op.qid);
       await qCount();
       D.holders = D.holders.filter(x => x !== h); saveSnapshot();
