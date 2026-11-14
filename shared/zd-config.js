@@ -76,6 +76,9 @@ const ZD_CHOICES = {
     ["G", "Sporting Purposes"],  ["H", "Subsistence Hunting"],  ["I", "Dealer Firearms"],
     ["J", "Dealer Ammunition"]
   ],
+  // Document types offered when a document is attached (starting list - Admins keep the real one on the Codes page)
+  DOC_TYPES: ["Application form", "Identity document", "Police clearance", "Medical certificate", "Competency certificate",
+              "Payment receipt", "Previous licence", "Firearm photo", "Purchase / transfer", "Correspondence", "Other"],
   STATUSES:      ["Active", "Suspended", "Cancelled", "Expired"]
 };
 

@@ -70,7 +70,7 @@ const isAdmin = () => S.role === "Admin";
 const SAMPLE_HOLDER = { GivenNames: "Sample", MiddleName: "James", Surname: "Holder", DateOfBirth: "1985-06-14", Sex: "M", Address: "Section 12, Allotment 4, Konedobu, National Capital District" };
 const SAMPLE_LIC = { BarcodeNo: "GLCS2020-076240", Title: "ZD-000123", LicenceType: "Shooter", IssueDate: today(), ExpiryDate: addYears(today(), RULES.LICENCE_YEARS),
   SerialNo: "4471-22983-RB", Make: "Remington", FirearmType: "Shotgun", Calibre: "12 gauge", Purpose: "B" };
-const arrFor = list => list === LISTS.holders ? D.holders : list === LISTS.licences ? D.licences : list === LISTS.firearms ? D.firearms : list === LISTS.staff ? D.staff : list === LISTS.codes ? D.codes : null;
+const arrFor = list => list === LISTS.holders ? D.holders : list === LISTS.licences ? D.licences : list === LISTS.firearms ? D.firearms : list === LISTS.staff ? D.staff : list === LISTS.codes ? D.codes : list === LISTS.docs ? D.docs : null;
 const lic = ref => D.licences.find(l => l.ClientRef === ref);
 const holder = ref => ref ? D.holders.find(h => h.ClientRef === ref) : null;
 const firstNames = h => [h.GivenNames, h.MiddleName].map(v => String(v || "").trim()).filter(Boolean).join(" ");   // first + middle
@@ -118,16 +118,17 @@ async function loadData() {
   try {
     if (!online()) throw Object.assign(new Error("offline"), { kind: "offline" });
     if (!DEMO) await getSite();
-    const [holders, licences, firearms, staff, backgrounds, codes] = await Promise.all([
+    const [holders, licences, firearms, staff, backgrounds, codes, docs] = await Promise.all([
       soft(listItems(LISTS.holders), LISTS.holders), soft(listItems(LISTS.licences), LISTS.licences), listItems(LISTS.firearms).catch(() => []),
-      soft(listItems(LISTS.staff), LISTS.staff), soft(libraryFiles(LISTS.backgrounds), LISTS.backgrounds), soft(listItems(LISTS.codes), LISTS.codes)]);
-    D = { holders, licences, firearms, staff, backgrounds, codes, at: new Date().toISOString(), offlineCopy: false };
+      soft(listItems(LISTS.staff), LISTS.staff), soft(libraryFiles(LISTS.backgrounds), LISTS.backgrounds), soft(listItems(LISTS.codes), LISTS.codes),
+      soft(libraryFiles(LISTS.docs), LISTS.docs)]);
+    D = { holders, licences, firearms, staff, backgrounds, codes, docs, at: new Date().toISOString(), offlineCopy: false };
     await saveSnapshot();
     cacheBackgrounds();
   } catch (e) {
     if (!isNetErr(e)) S.loadErr = e;
     const snap = await kvGet("snap").catch(() => null);
-    if (snap && (isNetErr(e) || !isForbidden(e))) D = { holders: [], firearms: [], codes: [], ...snap, offlineCopy: true };
+    if (snap && (isNetErr(e) || !isForbidden(e))) D = { holders: [], firearms: [], codes: [], docs: [], ...snap, offlineCopy: true };
   }
   await applyQueue();
 }
@@ -135,7 +136,8 @@ const saveSnapshot = () => kvSet("snap", {
   holders: D.holders.filter(h => !String(h.id).startsWith("local-")).map(clean),
   licences: D.licences.filter(l => !l._pending || !String(l.id).startsWith("local-")).map(clean),
   firearms: D.firearms.filter(f => !String(f.id).startsWith("local-")).map(clean),
-  staff: D.staff.map(clean), codes: (D.codes || []).filter(c => !String(c.id).startsWith("local-")).map(clean), backgrounds: D.backgrounds, at: D.at }).catch(() => {});
+  staff: D.staff.map(clean), codes: (D.codes || []).filter(c => !String(c.id).startsWith("local-")).map(clean),
+  docs: (D.docs || []).filter(d => !String(d.id).startsWith("local-")).map(clean), backgrounds: D.backgrounds, at: D.at }).catch(() => {});
 const clean = r => Object.fromEntries(Object.entries(r).filter(([k]) => !k.startsWith("_")));
 
 /* Put changes still waiting in the queue on screen, marked "waiting to send". */
@@ -152,6 +154,7 @@ async function applyQueue(onlyRef) {
     if (onlyRef && op.ref !== onlyRef) continue;
     if (op.kind === "upsert") mergeLocal(op.list, op.ref, op.fields, op.file ? { _localKey: op.file.localKey } : {});
     if (op.kind === "face") mergeLocal(LISTS.holders, op.ref, { FaceStatus: "Waiting" });
+    if (op.kind === "doc") mergeLocal(LISTS.docs, op.ref, op.fields, op.file ? { name: op.file.name, size: op.file.blob?.size } : {});
   }
   await qCount();
 }
@@ -160,7 +163,10 @@ SENT_HOOKS.push(async (op, saved) => {
   // (a converted licence is found by its old ref and comes back with its new one)
   const newRef_ = saved.ClientRef || op.ref;
   const i = arr.findIndex(r => r.ClientRef === op.ref || r.ClientRef === newRef_);
-  if (i >= 0) arr[i] = { ...saved }; else arr.push({ ...saved });
+  // a document's details-only change comes back without its file details, so keep those
+  const row = op.kind === "doc" && i >= 0 ? { ...arr[i], ...saved } : { ...saved };
+  delete row._pending;
+  if (i >= 0) arr[i] = row; else arr.push(row);
   if (op.file?.localKey) await kvDel(op.file.localKey).catch(() => {});
   await applyQueue(op.ref);                                          // anything still waiting for the same row
   saveSnapshot();
@@ -418,7 +424,7 @@ function route(quiet) {
   const keep = quiet && next === S.route && param === S.param && S.dirty && $("#mainForm")
     ? [...new FormData($("#mainForm"))] : null;
   if (!quiet || next !== S.route || param !== S.param) S.dirty = false;
-  S.route = next; S.param = param;
+  S.route = next; S.param = param; S.paste = null;
   if (keep) setTimeout(() => {
     const f = $("#mainForm"); if (!f) return;
     keep.forEach(([k, v]) => { if (f.elements[k]) f.elements[k].value = v; });
@@ -567,10 +573,12 @@ async function pageHolder() {
             ${isAdmin() && orphanFaces(h).length ? `<button class="btn sm" id="clearOrphan" title="The matching face belongs to a holder who has been deleted">Clear - the other face belongs to a deleted holder</button>` : ""}
             ${h.PhotoDate ? `<p class="small muted">Photo taken ${fmtDate(h.PhotoDate)} · used on all of this person's cards</p>` : ""}
           </div></div></div>
+        ${docsCard(h, null, isNew)}
       </div>
     </div>`;
   const form = $("#mainForm");
   form.oninput = () => { S.dirty = true; };
+  if (!isNew) wireDocs(h, null);
   const val = () => Object.fromEntries([...new FormData(form)].map(([k, v]) => [k, String(v).trim()]));
   const showPhoto = async () => {
     const u = DRAFT_PHOTO ? URL.createObjectURL(DRAFT_PHOTO) : await photoUrl(h);
@@ -628,6 +636,7 @@ async function pageHolder() {
   const delHolder = $("#delHolder");
   if (delHolder) delHolder.onclick = async () => {
     if (!online()) return toast("Deleting needs an internet connection");
+    if (docsFor(h).length) return toast("Delete this holder's documents first");
     if (!await ask(`Delete licence holder ${fullName(h)}?\n\nThey have no licensed firearms. The record is removed from the register for good.`, { title: "Delete holder", yes: "Delete", danger: true })) return;
     try {
       if (!String(h.id).startsWith("local-")) await deleteItem(LISTS.holders, h.id);
@@ -709,11 +718,13 @@ async function pageLicence() {
           <p class="small muted" style="text-align:center;margin:8px 0 0">${l.LastPrinted ? `Last printed ${fmtDate(l.LastPrinted)} · ${num(l.PrintCount)} card${num(l.PrintCount) === 1 ? "" : "s"} printed` : "Not printed yet"}</p>
           ${ro ? "" : `<div class="small muted" style="margin-top:12px">Background</div><div class="bgpick" id="bgPick"></div>`}
         </div>
+        ${docsCard(h, l, isNew)}
       </div>
     </div>`;
 
   const form = $("#mainForm");
   form.oninput = () => { S.dirty = true; schedulePreview(); };
+  if (!isNew) wireDocs(h, l);
   const val = () => Object.fromEntries([...new FormData(form)].map(([k, v]) => [k, String(v).trim()]));
   const issueEl = form.elements.IssueDate, expEl = form.elements.ExpiryDate;
   if (issueEl) issueEl.onchange = () => { if (isNew && issueEl.value) { expEl.value = addYears(issueEl.value, RULES.LICENCE_YEARS); schedulePreview(); } };
@@ -808,6 +819,7 @@ async function pageLicence() {
   const delBtn = $("#delBtn");
   if (delBtn) delBtn.onclick = async () => {
     if (!online()) return toast("Deleting needs an internet connection");
+    if (docsFor(h, l).length) return toast("This licence has documents - delete them, or Edit them and attach them to the holder, first");
     if (!await ask(`Delete licence ${l.Title} (${fullName(h)})?\n\nIt is removed from the register for good. Use Status "Cancelled" instead if the licence should stay on record.`, { title: "Delete licence", yes: "Delete", danger: true })) return;
     try {
       if (!String(l.id).startsWith("local-")) await deleteItem(LISTS.licences, l.id);
@@ -826,8 +838,10 @@ async function pageLicence() {
    ZD_Codes list (Codes page); until a set has rows there the starting list in zd-config.js is used. */
 const CODE_SETS = [["Class", "Class codes", "Kept on the record, not printed."],
   ["Purpose", "Purpose codes", "The letter is printed on the front of the card."],
-  ["Type", "Firearm type codes", "Printed in the card's Type box."]];
-const DEFAULT_CODES = { Class: CHOICES.CLASSES, Purpose: CHOICES.PURPOSES, Type: CHOICES.TYPES };
+  ["Type", "Firearm type codes", "Printed in the card's Type box."],
+  ["DocType", "Document types", "Offered when a document is attached.", { free: true }]];
+const DEFAULT_CODES = { Class: CHOICES.CLASSES, Purpose: CHOICES.PURPOSES, Type: CHOICES.TYPES, DocType: CHOICES.DOC_TYPES };
+const codeSetOpts = set => (CODE_SETS.find(c => c[0] === set) || [])[3] || {};
 const pairs = arr => (arr || []).map(p => Array.isArray(p) ? p : [p, p]);
 const savedCodes = set => (D.codes || []).filter(c => c.CodeSet === set);
 const codeSort = (a, b) => (Number(a.SortOrder) || 9999) - (Number(b.SortOrder) || 9999) || String(a.Title).localeCompare(String(b.Title));
@@ -1044,20 +1058,177 @@ function bgDialog(b, file, img) {
    STAFF & ROLES (Admin) + face records
    ===================================================================== */
 /* =====================================================================
+   DOCUMENTS - attached to a licence holder, or to one of their licences.
+   Stored in the ZD_Documents library (a folder per holder) with their
+   details as columns. Drag & drop, Upload, or paste (Ctrl+V) a copied file
+   or screenshot. Like everything else they wait on this device when offline.
+   ===================================================================== */
+const DOC_MAX_MB = 50;
+const docsFor = (h, l) => (D.docs || []).filter(d => d.HolderRef === h.ClientRef && (!l || d.LicenceRef === l.ClientRef))
+  .sort((a, b) => String(b.UploadedAt || "").localeCompare(String(a.UploadedAt || "")));
+const fileSize = n => !n ? "" : n < 1024 * 1024 ? Math.max(1, Math.round(n / 1024)) + " KB" : (n / 1024 / 1024).toFixed(1) + " MB";
+const safeName = s => String(s || "").replace(/["*:<>?/\\|#%~&{}]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "Document";
+const docTypeOptions = cur => codeOptions(codeList("DocType").map(([c]) => [c, c]), cur);
+const licLabel = l => `Lic ${l.Title}${l.SerialNo ? " · SN " + l.SerialNo : ""}`;
+
+function docsCard(h, l, isNew) {
+  const edit = canEdit();
+  if (isNew) return `<div class="card"><h3>Documents</h3><p class="muted small">Save the ${l ? "licence" : "holder"} first, then attach documents.</p></div>`;
+  const rows = docsFor(h, l), missing = S.missing.includes(LISTS.docs);
+  return `<div class="card" id="docsCard"><div class="bar"><h3 style="margin:0">Documents</h3><span class="tag" style="margin-left:8px">${rows.length}</span><span class="grow"></span>
+      ${edit && !missing ? `<button class="btn sm primary" id="docUp" type="button">Upload</button><input type="file" id="docFile" multiple hidden>` : ""}</div>
+    ${missing ? `<p class="small" style="color:var(--bad)">The ${esc(LISTS.docs)} library isn't in SharePoint yet - run the set-up script again, then refresh.</p>`
+      : edit ? `<div class="dropzone" id="docDrop">Drag files here, click <b>Upload</b>, or copy a file or screenshot and press <b>Ctrl+V</b></div>` : ""}
+    ${rows.length ? `<table class="docs"><thead><tr><th>Type</th><th>Document</th>${l ? "" : "<th>For</th>"}<th>Added</th><th></th></tr></thead><tbody>
+      ${rows.map(d => { const lic = !l && d.LicenceRef ? D.licences.find(x => x.ClientRef === d.LicenceRef) : null;
+        return `<tr><td>${esc(d.DocType || "")}</td>
+        <td><a href="#" data-open="${esc(d.ClientRef)}"><b>${esc(d.OriginalName || d.name || "Document")}</b></a>
+          ${d.DocDescription ? `<div class="small muted">${esc(d.DocDescription)}</div>` : ""}<div class="small muted">${[d.DocDate ? "Dated " + fmtDate(d.DocDate) : "", fileSize(d.size)].filter(Boolean).join(" · ")}</div></td>
+        ${l ? "" : `<td class="small" style="white-space:nowrap">${lic ? `<a href="#/licence/${encodeURIComponent(lic.ClientRef)}">Lic ${esc(lic.Title)}</a>` : d.LicenceRef ? `Lic ${esc(d.LicenceNo || "")}` : "Holder"}</td>`}
+        <td class="small">${fmtDate(String(d.UploadedAt || "").slice(0, 10))}<div class="muted">${esc(String(d.UploadedBy || "").split("@")[0])}</div></td>
+        <td style="text-align:right;white-space:nowrap">${d._pending ? `<span class="tag info">waiting</span> ` : ""}
+          ${edit ? `<button class="btn sm" type="button" data-dedit="${esc(d.ClientRef)}">Edit</button>` : ""}
+          ${isAdmin() ? ` <button class="btn sm danger" type="button" data-ddel="${esc(d.ClientRef)}">Delete</button>` : ""}</td></tr>`; }).join("")}</tbody></table>`
+      : `<p class="muted small" style="margin-bottom:0">No documents yet.</p>`}</div>`;
+}
+
+/* "Attach to" choices: the holder, or one of their licences */
+function attachToOptions(h, cur) {
+  const ls = D.licences.filter(x => x.HolderRef === h.ClientRef).sort((a, b) => String(a.Title).localeCompare(String(b.Title)));
+  return `<option value="">Licence holder - ${esc(fullName(h))}</option>` + ls.map(x => `<option value="${esc(x.ClientRef)}" ${x.ClientRef === cur ? "selected" : ""}>${esc(licLabel(x))}</option>`).join("");
+}
+function docFields(h, f) {
+  const lic = f.LicenceRef ? D.licences.find(x => x.ClientRef === f.LicenceRef) : null;
+  return { DocType: f.DocType, DocDescription: f.Description || "", DocDate: f.DocDate || "", HolderRef: h.ClientRef, HolderName: fullName(h),
+    LicenceRef: lic ? lic.ClientRef : "", LicenceNo: lic ? lic.Title : "" };
+}
+
+function wireDocs(h, l) {
+  const card = $("#docsCard"); if (!card) return;
+  $$("[data-open]").forEach(a => a.onclick = e => { e.preventDefault(); openDoc((D.docs || []).find(d => d.ClientRef === a.dataset.open)); });
+  $$("[data-dedit]").forEach(b => b.onclick = () => editDoc(h, (D.docs || []).find(d => d.ClientRef === b.dataset.dedit)));
+  $$("[data-ddel]").forEach(b => b.onclick = () => deleteDoc(h, (D.docs || []).find(d => d.ClientRef === b.dataset.ddel)));
+  if (!canEdit() || !$("#docDrop")) return;
+  const add = files => attachDocs(h, l, [...files]);
+  const input = $("#docFile");
+  $("#docUp").onclick = () => input.click();
+  input.onchange = () => { if (input.files.length) add(input.files); input.value = ""; };
+  // the whole card takes a drop; the dashed box shows where
+  const zone = $("#docDrop"); let depth = 0;
+  card.ondragenter = e => { if (!hasFiles(e)) return; e.preventDefault(); depth++; zone.classList.add("over"); };
+  card.ondragover = e => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } };
+  card.ondragleave = () => { if (--depth <= 0) { depth = 0; zone.classList.remove("over"); } };
+  card.ondrop = e => { if (!hasFiles(e)) return; e.preventDefault(); depth = 0; zone.classList.remove("over"); if (e.dataTransfer.files.length) add(e.dataTransfer.files); };
+  S.paste = add;                                       // Ctrl+V of a file or screenshot on this page
+}
+const hasFiles = e => [...(e.dataTransfer?.types || [])].includes("Files");
+// A file dropped anywhere else must not make the browser leave the app to show it
+window.addEventListener("dragover", e => { if (hasFiles(e)) e.preventDefault(); });
+window.addEventListener("drop", e => { if (hasFiles(e)) { e.preventDefault(); if (S.paste) toast("Drop documents onto the Documents box"); } });
+document.addEventListener("paste", e => {
+  if (!S.paste || $("#dlg").open || $("#ask").open) return;
+  const files = [...(e.clipboardData?.files || [])];
+  if (!files.length) return;                          // ordinary text paste into a field
+  e.preventDefault();
+  const stamp = `${today()} ${hhmm(new Date()).replace(":", "")}`;
+  // a pasted screenshot arrives as "image.png" - give it a useful name
+  S.paste(files.map((f, i) => /^image\.\w+$/i.test(f.name) ? new File([f], `Pasted ${stamp}${files.length > 1 ? " " + (i + 1) : ""}.${f.name.split(".").pop()}`, { type: f.type }) : f));
+});
+
+function attachDocs(h, l, files) {
+  const big = files.filter(f => f.size > DOC_MAX_MB * 1024 * 1024), ok = files.filter(f => f.size <= DOC_MAX_MB * 1024 * 1024 && f.size > 0);
+  if (big.length) toast(`Too large (over ${DOC_MAX_MB} MB): ${big.map(f => f.name).join(", ")}`);
+  if (!ok.length) return;
+  openDialog({ title: `Attach ${ok.length} document${ok.length === 1 ? "" : "s"}`, save: "Attach",
+    body: `<ul class="plain small" style="margin:0 0 12px">${ok.map(f => `<li><b>${esc(f.name)}</b><span class="grow"></span><span class="muted">${fileSize(f.size)}</span></li>`).join("")}</ul>
+      <div class="grid2"><label>Document type *<select name="DocType">${docTypeOptions("")}</select></label>
+        <label>Attach to<select name="LicenceRef">${attachToOptions(h, l?.ClientRef || "")}</select></label></div>
+      <div class="grid2"><label>Date on the document<input type="date" name="DocDate"></label><span></span></div>
+      <label>Description${ok.length > 1 ? " (used for all of them)" : ""}<input type="text" name="Description" maxlength="250"></label>`,
+    onSubmit: async f => {
+      if (!f.DocType) { toast("Choose the document type"); return false; }
+      const fields = docFields(h, f), lic = fields.LicenceRef ? lic_(fields.LicenceRef) : null;
+      const folder = `${safeName(fullName(h))} (${String(h.ClientRef).slice(0, 6)})`;
+      for (const file of ok) {
+        const ref = newRef(), dot = file.name.lastIndexOf(".");
+        const stem = dot > 0 ? file.name.slice(0, dot) : file.name, ext = dot > 0 ? file.name.slice(dot).replace(/[^.\w]/g, "") : "";
+        const fl = { ...fields, OriginalName: file.name, UploadedBy: me(), UploadedAt: `${today()} ${hhmm(new Date())}` };
+        mergeLocal(LISTS.docs, ref, fl, { name: file.name, size: file.size });
+        await enqueue({ kind: "doc", list: LISTS.docs, ref, fields: fl, label: `Document · ${f.DocType} · ${file.name}`,
+          file: { blob: file, name: file.name, type: file.type || "application/octet-stream", path: `${folder}/${safeName(stem)} (${ref.slice(0, 6)})${ext}` } });
+        logActivity("Document attached", h, lic, `${f.DocType}: ${file.name}`);
+      }
+      toast(`${ok.length} document${ok.length === 1 ? "" : "s"} attached`); route(true);
+    } });
+}
+const lic_ = ref => D.licences.find(x => x.ClientRef === ref) || null;
+
+async function openDoc(d) {
+  if (!d) return;
+  const w = window.open("", "_blank");               // opened now, while the click still counts, so it isn't blocked
+  try {
+    let url = !DEMO && d.webUrl && !d._pending ? d.webUrl : "";
+    if (!url) {
+      const op = (await qMine()).find(o => o.kind === "doc" && o.ref === d.ClientRef && o.file?.blob);
+      const blob = op ? op.file.blob : d.fileId ? await downloadFile(LISTS.docs, d.fileId) : null;
+      if (!blob) throw new Error(online() ? "The file couldn't be found" : "Documents open when you're online");
+      url = URL.createObjectURL(blob); setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }
+    if (w) w.location = url; else location.href = url;
+  } catch (e) { w?.close(); toast(isNetErr(e) ? "Documents open when you're online" : e.message); }
+}
+
+function editDoc(h, d) {
+  if (!d) return;
+  openDialog({ title: "Document details",
+    body: `<p class="small" style="margin-top:0"><b>${esc(d.OriginalName || d.name || "")}</b></p>
+      <div class="grid2"><label>Document type *<select name="DocType">${docTypeOptions(d.DocType || "")}</select></label>
+        <label>Attach to<select name="LicenceRef">${attachToOptions(h, d.LicenceRef || "")}</select></label></div>
+      <div class="grid2"><label>Date on the document<input type="date" name="DocDate" value="${esc(String(d.DocDate || "").slice(0, 10))}"></label><span></span></div>
+      <label>Description<input type="text" name="Description" maxlength="250" value="${esc(d.DocDescription || "")}"></label>`,
+    onSubmit: async f => {
+      if (!f.DocType) { toast("Choose the document type"); return false; }
+      const fields = docFields(h, f);
+      mergeLocal(LISTS.docs, d.ClientRef, fields);
+      // still waiting to upload? change the waiting upload instead of adding a second change
+      const op = (await qMine()).find(o => o.kind === "doc" && o.ref === d.ClientRef && o.file?.blob);
+      if (op) { op.fields = { ...op.fields, ...fields }; op.error = ""; await qPut(op); await qCount(); flushSoon(300); }
+      else await enqueue({ kind: "doc", list: LISTS.docs, ref: d.ClientRef, fields, label: `Document details · ${d.OriginalName || d.name}` });
+      route(true);
+    } });
+}
+
+async function deleteDoc(h, d) {
+  if (!d) return;
+  const queued = (await qMine()).filter(o => o.kind === "doc" && o.ref === d.ClientRef);
+  const notSent = String(d.id || "").startsWith("local-");
+  if (!notSent && !online()) return toast("Deleting needs an internet connection");
+  if (!await ask(`Delete ${d.OriginalName || d.name}?\n\n${notSent ? "It hasn't been sent to SharePoint yet, so it will simply be dropped." : "It is removed from SharePoint for good."}`, { title: "Delete document", yes: "Delete", danger: true })) return;
+  try {
+    if (!notSent) await deleteItem(LISTS.docs, d.id);
+    for (const op of queued) await qDel(op.qid);
+    await qCount();
+    D.docs = D.docs.filter(x => x.ClientRef !== d.ClientRef); saveSnapshot();
+    if (!notSent) logActivity("Document deleted", h, d.LicenceRef ? lic_(d.LicenceRef) : null, `${d.DocType || ""}: ${d.OriginalName || d.name}`);
+    toast("Document deleted"); route(true);
+  } catch (e) { toast(isForbidden(e) ? "SharePoint refused this (no permission)" : e.message); }
+}
+
+/* =====================================================================
    CODES (Admin) - Class, Purpose and Type codes kept in the ZD_Codes list
    ===================================================================== */
 function pageCodes() {
   const missing = S.missing.includes(LISTS.codes);
   $("#main").innerHTML = banners() + `<div class="bar"><h2>Codes</h2></div>
     ${missing ? `<div class="banner">The <b>${esc(LISTS.codes)}</b> list isn't in SharePoint yet - run the set-up script again, then refresh. Until then the starting lists below are used and can't be changed.</div>` : ""}
-    ${CODE_SETS.map(([set, title, note]) => {
+    ${CODE_SETS.map(([set, title, note, o = {}]) => {
       const rows = savedCodes(set).sort(codeSort), saved = rows.length > 0;
       const shown = saved ? rows : pairs(DEFAULT_CODES[set]).map(([c, n], i) => ({ Title: c, Description: c === n ? "" : n, SortOrder: i + 1 }));
       return `<div class="card"><div class="bar"><h3 style="margin:0">${esc(title)}</h3><span class="small" style="margin-left:10px;color:#c9d1db;font-weight:400;text-transform:none;letter-spacing:0">${esc(note)}</span><span class="grow"></span>
           ${saved ? `<button class="btn sm primary" data-add="${set}" ${missing ? "disabled" : ""}>+ Add code</button>`
                   : `<button class="btn sm primary" data-seed="${set}" ${missing ? "disabled" : ""}>Save this list to SharePoint so it can be changed</button>`}</div>
         ${saved ? "" : `<p class="small muted">This is the starting list from the app's settings. Save it to SharePoint first, then codes can be added, changed or switched off.</p>`}
-        <table><thead><tr><th style="width:90px">Code</th><th>Meaning</th><th style="width:70px">Order</th><th style="width:80px">In use</th><th></th></tr></thead><tbody>
+        <table><thead><tr><th style="width:${o.free ? 240 : 90}px">${o.free ? "Document type" : "Code"}</th><th>${o.free ? "Notes" : "Meaning"}</th><th style="width:70px">Order</th><th style="width:80px">In use</th><th></th></tr></thead><tbody>
         ${shown.map(c => `<tr class="${isActive(c) ? "" : "muted"}"><td class="mono"><b>${esc(c.Title)}</b></td><td>${esc(c.Description || "")}</td><td>${esc(c.SortOrder ?? "")}</td><td>${isActive(c) ? "Yes" : "No"}</td>
           <td style="text-align:right">${c._pending ? `<span class="tag info">waiting</span> ` : ""}${saved ? `<button class="btn sm" data-ed="${esc(c.ClientRef || c.id)}">Edit</button>` : ""}</td></tr>`).join("")}
         </tbody></table></div>`; }).join("")}
@@ -1071,26 +1242,28 @@ function pageCodes() {
     for (const [i, [c, n]] of list.entries()) {
       const ref = newRef(), f = { Title: c, Description: c === n ? "" : n, CodeSet: set, SortOrder: i + 1, Active: "Yes" };
       mergeLocal(LISTS.codes, ref, f);
-      await enqueue({ kind: "upsert", list: LISTS.codes, ref, fields: f, label: `${set} code · ${c}` });
+      await enqueue({ kind: "upsert", list: LISTS.codes, ref, fields: f, label: `${set === "DocType" ? "Document type" : set + " code"} · ${c}` });
     }
     toast(`${list.length} ${set} codes saved`); pageCodes();
   });
 }
 function codeDialog(set, c) {
-  openDialog({ title: (c ? "Edit " : "Add ") + set.toLowerCase() + " code",
-    body: `<div class="grid2"><label>Code *<input type="text" name="Title" maxlength="12" value="${esc(c?.Title || "")}" style="text-transform:uppercase"></label>
+  const free = codeSetOpts(set).free, what = free ? "document type" : set.toLowerCase() + " code";
+  openDialog({ title: (c ? "Edit " : "Add ") + what,
+    body: `<div class="grid2"><label>${free ? "Document type" : "Code"} *<input type="text" name="Title" maxlength="${free ? 60 : 12}" value="${esc(c?.Title || "")}" ${free ? "" : `style="text-transform:uppercase"`}></label>
         <label>Order<input type="number" name="SortOrder" min="1" value="${esc(c?.SortOrder ?? (savedCodes(set).length + 1))}"></label></div>
-      <label>Meaning${set === "Type" ? "" : " *"}<input type="text" name="Description" value="${esc(c?.Description || "")}"></label>
+      <label>${free ? "Notes" : "Meaning"}${set === "Type" || free ? "" : " *"}<input type="text" name="Description" value="${esc(c?.Description || "")}"></label>
       <label>In use<select name="Active">${["Yes", "No"].map(x => `<option ${x === (isActive(c || {}) ? "Yes" : "No") ? "selected" : ""}>${x}</option>`).join("")}</select></label>`,
     onSubmit: async f => {
-      f.Title = f.Title.toUpperCase();
-      if (!f.Title || (set !== "Type" && !f.Description)) { toast(set === "Type" ? "The code is needed" : "Code and meaning are needed"); return false; }
-      if (savedCodes(set).some(x => x !== c && String(x.Title).toUpperCase() === f.Title)) { toast(`${f.Title} is already a ${set.toLowerCase()} code`); return false; }
+      if (!free) f.Title = f.Title.toUpperCase();
+      const optional = set === "Type" || free;
+      if (!f.Title || (!optional && !f.Description)) { toast(optional ? `The ${free ? "document type" : "code"} is needed` : "Code and meaning are needed"); return false; }
+      if (savedCodes(set).some(x => x !== c && String(x.Title).toUpperCase() === f.Title.toUpperCase())) { toast(`${f.Title} is already a ${what}`); return false; }
       if (Number(f.SortOrder)) f.SortOrder = Number(f.SortOrder); else delete f.SortOrder;
       f.CodeSet = set;
       const ref = c?.ClientRef || newRef();
       mergeLocal(LISTS.codes, ref, f);
-      await enqueue({ kind: "upsert", list: LISTS.codes, ref, fields: f, label: `${set} code · ${f.Title}` });
+      await enqueue({ kind: "upsert", list: LISTS.codes, ref, fields: f, label: `${set === "DocType" ? "Document type" : set + " code"} · ${f.Title}` });
       pageCodes();
     } });
 }

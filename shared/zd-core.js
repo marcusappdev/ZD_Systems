@@ -27,7 +27,7 @@ const FACE_API = DEMO ? "" : String(typeof ZD_FACE_API === "string" ? ZD_FACE_AP
 const L = n => BRAND.LIST_PREFIX + n;
 const LISTS = {
   holders: L("Holders"), licences: L("Licences"), firearms: L("Firearms"), staff: L("Staff"), activity: L("Activity"),
-  codes: L("Codes"),
+  codes: L("Codes"), docs: L("Documents"),
   photos: L("LicencePhotos"), backgrounds: L("CardBackgrounds")
 };
 const SCOPES = ["Sites.ReadWrite.All", "User.Read"];
@@ -204,7 +204,7 @@ async function libraryFiles(list) {
   let url = `/sites/${siteId}/lists/${list}/items?expand=fields,driveItem&$top=999`, out = [];
   while (url) {
     const j = await graph(url);
-    out.push(...j.value.filter(i => i.driveItem?.file).map(i => ({ id: i.id, fileId: i.driveItem.id, name: i.driveItem.name, ...i.fields })));
+    out.push(...j.value.filter(i => i.driveItem?.file).map(i => ({ id: i.id, fileId: i.driveItem.id, name: i.driveItem.name, webUrl: i.driveItem.webUrl, size: i.driveItem.size, ...i.fields })));
     url = j["@odata.nextLink"];
   }
   return out;
@@ -226,11 +226,13 @@ async function addLibraryFile(list, name, blob, fields) {
 
 /* =====================================================================
    OFFLINE QUEUE
-   op = { user, kind:"upsert"|"face", list, ref, fields, file, label, created, tries, error }
+   op = { user, kind:"upsert"|"face"|"doc", list, ref, fields, file, label, created, tries, error }
      upsert - find the row by ClientRef: update it if it's there, else create it.
               A photo travels with it and is uploaded first.
      face   - (licence holder's face) sent to the face service once online,
               then the FaceId is written onto the licence.
+     doc    - a document for the documents library: uploaded with its details
+              the first time; after that only its details are changed.
    Ops are sent in the order they were made.
    ===================================================================== */
 const SYNC = { waiting: 0, error: "", busy: false, onChange: () => {} };
@@ -255,6 +257,7 @@ async function sendOp(op) {
       FaceNote: r.duplicates?.length ? "Same face as holder(s): " + r.duplicates.map(d => `${d.ref} (${d.similarity}%)`).join(", ") : "", FaceDate: today() };
     return sendOp({ kind: "upsert", list: LISTS.holders, ref: op.ref, fields: f });
   }
+  if (op.kind === "doc") return sendDoc(op);
   const f = { ...op.fields, ClientRef: op.fields.ClientRef || op.ref };   // a converted row may take a new ClientRef
   // A row this device created moments ago may not show up in SharePoint's search yet, so
   // remember its id: otherwise a quick second change would create a second copy.
@@ -267,6 +270,24 @@ async function sendOp(op) {
   }
   const saved = await saveItem(op.list, found?.id || null, f);
   for (const r of new Set([op.ref, f.ClientRef])) { KNOWN_IDS.set(op.list + "|" + r, saved.id); kvSet("id:" + op.list + "|" + r, saved.id).catch(() => {}); }
+  return saved;
+}
+async function sendDoc(op) {
+  const key = op.list + "|" + op.ref, fields = { ...op.fields, ClientRef: op.ref };
+  const known = KNOWN_IDS.get(key) || (await kvGet("id:" + key).catch(() => null));
+  const found = known ? { id: known } : await findByRef(op.list, op.ref);
+  let saved;
+  if (found) saved = await saveItem(op.list, found.id, fields);
+  else {
+    if (!op.file?.blob) throw new Error("The file for this document is missing - discard this change and attach the file again");
+    const up = await uploadFile(op.list, op.file.path, op.file.blob, op.file.type || "application/octet-stream");
+    if (DEMO) saved = await saveItem(op.list, null, { ...fields, name: up.name, fileId: up.id, webUrl: "", size: op.file.blob.size });
+    else {
+      const li = await graph(`/drives/${await driveOf(op.list)}/items/${up.id}/listItem`);
+      saved = { ...(await saveItem(op.list, li.id, fields)), id: li.id, fileId: up.id, name: up.name, webUrl: up.webUrl, size: up.size };
+    }
+  }
+  KNOWN_IDS.set(key, saved.id); kvSet("id:" + key, saved.id).catch(() => {});
   return saved;
 }
 async function flushQueue() {
@@ -296,7 +317,7 @@ async function flushQueue() {
         op.tries = (op.tries || 0) + 1;
         op.error = isForbidden(e) ? "SharePoint refused this change (no permission)" : (e.message || "Failed");
         await qPut(op);
-        if (op.kind === "upsert") break;                               // keep order: later changes may depend on it
+        if (op.kind === "upsert" || op.kind === "doc") break;                               // keep order: later changes may depend on it
       }
     }
   } finally {
