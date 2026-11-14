@@ -27,6 +27,7 @@ const FACE_API = DEMO ? "" : String(typeof ZD_FACE_API === "string" ? ZD_FACE_AP
 const L = n => BRAND.LIST_PREFIX + n;
 const LISTS = {
   holders: L("Holders"), licences: L("Licences"), firearms: L("Firearms"), staff: L("Staff"), activity: L("Activity"),
+  codes: L("Codes"),
   photos: L("LicencePhotos"), backgrounds: L("CardBackgrounds")
 };
 const SCOPES = ["Sites.ReadWrite.All", "User.Read"];

@@ -55,7 +55,15 @@ const ZD_BRAND = {
    ===================================================================== */
 const ZD_CHOICES = {
   LICENCE_TYPES: ["Shooter", "Collector", "Club member", "Security", "Dealer"],
-  FIREARM_TYPES: ["Rifle", "Shotgun", "Handgun", "Other"],
+  FIREARM_TYPES: ["Rifle", "Shotgun", "Handgun", "Other"],   // old free-text types (records made before the Type codes)
+  // STARTING LISTS ONLY. Admins keep the real Class, Purpose and Type codes in
+  // the ZD_Codes SharePoint list (Codes page). These are used until a set has
+  // been saved there, and can be copied there with one click.
+  // Type codes from ZD Systems' updated list (Nov 2026). Printed in the card's
+  // "Type" box; not all of them appear on the back of the legacy card.
+  TYPES: ["REV", "RBA", "RSA", "SPA", "SSA", "AIR", "GAS", "DBS", "PSA", "RLA", "RPA", "RSS", "SSB", "SBA",
+          "SDB", "SLA", "SLV", "SOU", "OBS", "SW", "SXS", "SSS", "SSP", "SSG", "ARMS", "MP", "PCA", "PDA",
+          "SAP", "SB", "SDU", "PRV", "S/GUN"],
   // Class codes as printed on the back of the PNG Firearm Licence card (kept on record, not printed).
   CLASSES: [
     ["A", ".22 and Air Rifle"], ["B", "All Shotguns"], ["C", "All Pistols"], ["D", "All Other Rifles"], ["E", "Other"]

@@ -68,7 +68,7 @@ const isAdmin = () => S.role === "Admin";
 const SAMPLE_HOLDER = { GivenNames: "Sample", MiddleName: "James", Surname: "Holder", DateOfBirth: "1985-06-14", Sex: "M", Address: "Section 12, Allotment 4, Konedobu, National Capital District" };
 const SAMPLE_LIC = { BarcodeNo: "GLCS2020-076240", Title: "ZD-000123", LicenceType: "Shooter", IssueDate: today(), ExpiryDate: addYears(today(), RULES.LICENCE_YEARS),
   SerialNo: "4471-22983-RB", Make: "Remington", FirearmType: "Shotgun", Calibre: "12 gauge", Purpose: "B" };
-const arrFor = list => list === LISTS.holders ? D.holders : list === LISTS.licences ? D.licences : list === LISTS.firearms ? D.firearms : list === LISTS.staff ? D.staff : null;
+const arrFor = list => list === LISTS.holders ? D.holders : list === LISTS.licences ? D.licences : list === LISTS.firearms ? D.firearms : list === LISTS.staff ? D.staff : list === LISTS.codes ? D.codes : null;
 const lic = ref => D.licences.find(l => l.ClientRef === ref);
 const holder = ref => ref ? D.holders.find(h => h.ClientRef === ref) : null;
 const firstNames = h => [h.GivenNames, h.MiddleName].map(v => String(v || "").trim()).filter(Boolean).join(" ");   // first + middle
@@ -116,16 +116,16 @@ async function loadData() {
   try {
     if (!online()) throw Object.assign(new Error("offline"), { kind: "offline" });
     if (!DEMO) await getSite();
-    const [holders, licences, firearms, staff, backgrounds] = await Promise.all([
+    const [holders, licences, firearms, staff, backgrounds, codes] = await Promise.all([
       soft(listItems(LISTS.holders), LISTS.holders), soft(listItems(LISTS.licences), LISTS.licences), listItems(LISTS.firearms).catch(() => []),
-      soft(listItems(LISTS.staff), LISTS.staff), soft(libraryFiles(LISTS.backgrounds), LISTS.backgrounds)]);
-    D = { holders, licences, firearms, staff, backgrounds, at: new Date().toISOString(), offlineCopy: false };
+      soft(listItems(LISTS.staff), LISTS.staff), soft(libraryFiles(LISTS.backgrounds), LISTS.backgrounds), soft(listItems(LISTS.codes), LISTS.codes)]);
+    D = { holders, licences, firearms, staff, backgrounds, codes, at: new Date().toISOString(), offlineCopy: false };
     await saveSnapshot();
     cacheBackgrounds();
   } catch (e) {
     if (!isNetErr(e)) S.loadErr = e;
     const snap = await kvGet("snap").catch(() => null);
-    if (snap && (isNetErr(e) || !isForbidden(e))) D = { holders: [], firearms: [], ...snap, offlineCopy: true };
+    if (snap && (isNetErr(e) || !isForbidden(e))) D = { holders: [], firearms: [], codes: [], ...snap, offlineCopy: true };
   }
   await applyQueue();
 }
@@ -133,7 +133,7 @@ const saveSnapshot = () => kvSet("snap", {
   holders: D.holders.filter(h => !String(h.id).startsWith("local-")).map(clean),
   licences: D.licences.filter(l => !l._pending || !String(l.id).startsWith("local-")).map(clean),
   firearms: D.firearms.filter(f => !String(f.id).startsWith("local-")).map(clean),
-  staff: D.staff.map(clean), backgrounds: D.backgrounds, at: D.at }).catch(() => {});
+  staff: D.staff.map(clean), codes: (D.codes || []).filter(c => !String(c.id).startsWith("local-")).map(clean), backgrounds: D.backgrounds, at: D.at }).catch(() => {});
 const clean = r => Object.fromEntries(Object.entries(r).filter(([k]) => !k.startsWith("_")));
 
 /* Put changes still waiting in the queue on screen, marked "waiting to send". */
@@ -383,7 +383,7 @@ function logActivity(action, h, l, details = "") {
 /* ---------------- header, routing ---------------- */
 const NAV = [
   ["", "Licence Holders", () => true], ["firearms", "Licensed Firearms", () => true], ["newholder", "+ New Holder", canEdit], ["face", "Find by Face", canEdit],
-  ["backgrounds", "Card Backgrounds", isAdmin], ["staff", "Staff", isAdmin], ["settings", "Settings", () => true]];
+  ["backgrounds", "Card Backgrounds", isAdmin], ["codes", "Codes", isAdmin], ["staff", "Staff", isAdmin], ["settings", "Settings", () => true]];
 function renderNav() {
   $("#logo").innerHTML = `${esc(String(BRAND.COMPANY).toUpperCase())}${DEMO ? "<small>demo</small>" : ""}`;
   const cur = { licence: "firearms", newlicence: "", holder: "", holders: "" }[S.route] ?? S.route;
@@ -418,11 +418,11 @@ function route(quiet) {
     keep.forEach(([k, v]) => { if (f.elements[k]) f.elements[k].value = v; });
     S.dirty = true; f.dispatchEvent(new Event("input"));
   });
-  const allowed = { "": true, firearms: true, holders: true, holder: true, licence: true, newholder: canEdit(), newlicence: canEdit(), face: canEdit(), backgrounds: isAdmin(), staff: isAdmin(), settings: true };
+  const allowed = { "": true, firearms: true, holders: true, holder: true, licence: true, newholder: canEdit(), newlicence: canEdit(), face: canEdit(), backgrounds: isAdmin(), codes: isAdmin(), staff: isAdmin(), settings: true };
   if (!allowed[next]) { location.hash = "#/"; return; }
   renderNav();
   ({ "": pageHolders, firearms: pageRegister, holders: pageHolders, holder: pageHolder, newholder: pageHolder, licence: pageLicence, newlicence: pageLicence,
-     face: pageFace, backgrounds: pageBackgrounds, staff: pageStaff, settings: pageSettings })[next]();
+     face: pageFace, backgrounds: pageBackgrounds, codes: pageCodes, staff: pageStaff, settings: pageSettings })[next]();
 }
 function banners() {
   let h = "";
@@ -448,6 +448,8 @@ function statusOf(l) {
 const STATUS_TAG = { Active: "ok", Expiring: "warn", Expired: "bad", Suspended: "bad", Cancelled: "bad" };
 /* "Same face as holder(s): ab12cd (99%)" -> with the holders' names */
 const faceNote = h => String(h?.FaceNote || "").replace(/\b([A-Za-z0-9]{12,40})\b/g, r => { const o = holder(r); return o ? fullName(o) : r; });
+/* References in a holder's face warning that no longer belong to anyone */
+const orphanFaces = h => h?.FaceStatus === "Check" ? [...String(h.FaceNote || "").matchAll(/\b([A-Za-z0-9]{12,40})\b(?= \()/g)].map(m => m[1]).filter(r => r !== h.ClientRef && !holder(r)) : [];
 const faceTag = h => ({ Enrolled: `<span class="tag ok">Face on file</span>`, Check: `<span class="tag bad" title="${esc(faceNote(h))}">Face: check</span>`,
   Failed: `<span class="tag warn" title="${esc(faceNote(h))}">Face failed</span>`, Waiting: `<span class="tag info">Face waiting</span>` })[h?.FaceStatus] || `<span class="tag">No face</span>`;
 const gunText = l => [l.SerialNo, [l.Make, l.Model].filter(Boolean).join(" "), l.FirearmType].filter(Boolean).join(" · ");
@@ -556,6 +558,7 @@ async function pageHolder() {
               <p class="small muted">The face record lets you find this person from a photo later, and warns if the same face is already on file under another name.</p>
               ${!isNew && (h.PhotoItemId || h._localKey) && !["Enrolled", "Waiting", "Check"].includes(h.FaceStatus) ? `<button class="btn sm" id="faceNow">Register face from this photo</button>` : ""}`}
             ${h.FaceNote ? `<p class="small" style="color:var(--bad)">${esc(faceNote(h))}</p>` : ""}
+            ${isAdmin() && orphanFaces(h).length ? `<button class="btn sm" id="clearOrphan" title="The matching face belongs to a holder who has been deleted">Clear - the other face belongs to a deleted holder</button>` : ""}
             ${h.PhotoDate ? `<p class="small muted">Photo taken ${fmtDate(h.PhotoDate)} · used on all of this person's cards</p>` : ""}
           </div></div></div>
       </div>
@@ -603,12 +606,26 @@ async function pageHolder() {
     toast(online() ? "Saved" : "Saved on this device - it will be sent when you're online");
     if (isNew) location.hash = "#/holder/" + encodeURIComponent(ref); else route(true);
   };
+  const clearOrphan = $("#clearOrphan");
+  if (clearOrphan) clearOrphan.onclick = async () => {
+    if (!online()) return toast("Needs an internet connection");
+    try {
+      for (const r of orphanFaces(h)) await faceCall({ action: "licenseeRemove", ref: r });
+      const f = { FaceStatus: "Enrolled", FaceNote: "" };
+      mergeLocal(LISTS.holders, ref, f);
+      await enqueue({ kind: "upsert", list: LISTS.holders, ref, fields: f, label: `Face check cleared · ${fullName(h)}` });
+      logActivity("Face check cleared", h, null, "matching face belonged to a deleted holder");
+      toast("Cleared"); route(true);
+    } catch (e) { toast(e.status === 403 ? "Only face-service administrators can do this" : e.message); }
+  };
   const delHolder = $("#delHolder");
   if (delHolder) delHolder.onclick = async () => {
     if (!online()) return toast("Deleting needs an internet connection");
     if (!confirm(`Delete licence holder ${fullName(h)}?\n\nThey have no licensed firearms. The record is removed from the register for good.`)) return;
     try {
       if (!String(h.id).startsWith("local-")) await deleteItem(LISTS.holders, h.id);
+      // their face record in AWS goes too, so it can't be mistaken for someone else later
+      if (!D.holders.some(x => x !== h && x.ClientRef === ref)) await faceCall({ action: "licenseeRemove", ref }).catch(e => console.warn("face record not removed", e));
       for (const op of (await qMine()).filter(o => (o.list === LISTS.holders || o.kind === "face") && o.ref === ref)) await qDel(op.qid);
       await qCount();
       D.holders = D.holders.filter(x => x !== h); saveSnapshot();
@@ -662,12 +679,12 @@ async function pageLicence() {
             <label>Serial no (SN) *<input type="text" name="SerialNo" value="${esc(l.SerialNo)}" class="mono" ${dis}></label>
             <label>Purpose * (the letter prints)<select name="Purpose" ${dis}>${purposeOptions(l.Purpose || "")}</select></label></div>
           <div class="grid3"><label>Make<input type="text" name="Make" value="${esc(l.Make)}" ${dis}></label>
-            <label>Type<select name="FirearmType" ${dis}>${opt(["", ...CHOICES.FIREARM_TYPES], l.FirearmType || "")}</select></label>
+            <label>Type (printed)<select name="FirearmType" ${dis}>${codeOptions(codeList("Type"), l.FirearmType || "")}</select></label>
             <label>Calibre<input type="text" name="Calibre" value="${esc(l.Calibre)}" ${dis}></label></div>
           <div class="grid3"><label>Issued *<input type="date" name="IssueDate" value="${esc(String(l.IssueDate || "").slice(0, 10))}" ${dis}></label>
             <label>Expires *<input type="date" name="ExpiryDate" value="${esc(String(l.ExpiryDate || "").slice(0, 10))}" ${dis}></label>
             <label>Status<select name="LicenceStatus" ${dis}>${opt(CHOICES.STATUSES, l.LicenceStatus || "Active")}</select></label></div>
-          <div class="grid3"><label>Class * (not printed)<select name="Class" ${dis}>${codeOptions(CLASS_LIST, l.Class || "")}</select></label>
+          <div class="grid3"><label>Class * (not printed)<select name="Class" ${dis}>${codeOptions(codeList("Class"), l.Class || "")}</select></label>
             <label>Licence type *<select name="LicenceType" ${dis}>${opt(CHOICES.LICENCE_TYPES, l.LicenceType)}</select></label>
             <label>Model (not printed)<input type="text" name="Model" value="${esc(l.Model)}" ${dis}></label></div>
           <div class="grid2"><label>Barcode no. (back of the two-sided card · blank = licence no)<input type="text" name="BarcodeNo" value="${esc(l.BarcodeNo)}" class="mono" placeholder="e.g. GLCS2020-076240" ${dis}></label></div>
@@ -797,21 +814,32 @@ async function pageLicence() {
   if (!isNew && online()) loadHistory("LicenceRef", ref, l.Title);
 }
 
-/* Purpose codes: stored and printed as the letter ("B"), shown with its meaning ("B - Self Protection") */
-const PURPOSE_LIST = (CHOICES.PURPOSES || []).map(p => Array.isArray(p) ? p : [p, p]);
-const purposeName = code => (PURPOSE_LIST.find(p => p[0] === code) || [])[1] || "";
-const CLASS_LIST = (CHOICES.CLASSES || []).map(p => Array.isArray(p) ? p : [p, p]);
-const className = code => (CLASS_LIST.find(p => p[0] === code) || [])[1] || "";
+/* Code lists - Class, Purpose and Type. Stored (and, for Purpose and Type, printed) as the
+   code ("B", "REV"), shown with its meaning ("B - Self Protection"). Admins keep them in the
+   ZD_Codes list (Codes page); until a set has rows there the starting list in zd-config.js is used. */
+const CODE_SETS = [["Class", "Class codes", "Kept on the record, not printed."],
+  ["Purpose", "Purpose codes", "The letter is printed on the front of the card."],
+  ["Type", "Firearm type codes", "Printed in the card's Type box."]];
+const DEFAULT_CODES = { Class: CHOICES.CLASSES, Purpose: CHOICES.PURPOSES, Type: CHOICES.TYPES };
+const pairs = arr => (arr || []).map(p => Array.isArray(p) ? p : [p, p]);
+const savedCodes = set => (D.codes || []).filter(c => c.CodeSet === set);
+const codeSort = (a, b) => (Number(a.SortOrder) || 9999) - (Number(b.SortOrder) || 9999) || String(a.Title).localeCompare(String(b.Title));
+const isActive = c => c.Active !== "No" && c.Active !== false;
+function codeList(set) {
+  const rows = savedCodes(set);
+  if (!rows.length) return pairs(DEFAULT_CODES[set]);
+  return rows.filter(isActive).sort(codeSort).map(c => [String(c.Title), String(c.Description || c.Title)]);
+}
+const codeName = (set, code) => { const r = savedCodes(set).find(c => c.Title === code); return r ? String(r.Description || "") : ((pairs(DEFAULT_CODES[set]).find(p => p[0] === code) || [])[1] || ""); };
+const purposeName = code => codeName("Purpose", code);
+const className = code => codeName("Class", code);
+const typeName = code => codeName("Type", code);
 function codeOptions(list, cur) {
   const known = list.some(p => p[0] === cur);
-  return `<option value="">-</option>` + list.map(([c, n]) => `<option value="${esc(c)}" ${c === cur ? "selected" : ""}>${esc(c === n ? c : c + " - " + n)}</option>`).join("")
+  return `<option value="">-</option>` + list.map(([c, n]) => `<option value="${esc(c)}" ${c === cur ? "selected" : ""}>${esc(!n || c === n ? c : c + " - " + n)}</option>`).join("")
     + (cur && !known ? `<option value="${esc(cur)}" selected>${esc(cur)} (old value - please choose)</option>` : "");
 }
-function purposeOptions(cur) {
-  const known = PURPOSE_LIST.some(p => p[0] === cur);
-  return `<option value="">-</option>` + PURPOSE_LIST.map(([c, n]) => `<option value="${esc(c)}" ${c === cur ? "selected" : ""}>${esc(c === n ? c : c + " - " + n)}</option>`).join("")
-    + (cur && !known ? `<option value="${esc(cur)}" selected>${esc(cur)} (old value - please choose a code)</option>` : "");
-}
+const purposeOptions = cur => codeOptions(codeList("Purpose"), cur);
 /* Background settings from its library columns */
 async function bgFor(b, orientation = "Landscape") {
   if (!b) return { image: null, orientation, textColour: "Dark", showHeader: true };
@@ -1008,6 +1036,58 @@ function bgDialog(b, file, img) {
 /* =====================================================================
    STAFF & ROLES (Admin) + face records
    ===================================================================== */
+/* =====================================================================
+   CODES (Admin) - Class, Purpose and Type codes kept in the ZD_Codes list
+   ===================================================================== */
+function pageCodes() {
+  const missing = S.missing.includes(LISTS.codes);
+  $("#main").innerHTML = banners() + `<div class="bar"><h2>Codes</h2></div>
+    ${missing ? `<div class="banner">The <b>${esc(LISTS.codes)}</b> list isn't in SharePoint yet - run the set-up script again, then refresh. Until then the starting lists below are used and can't be changed.</div>` : ""}
+    ${CODE_SETS.map(([set, title, note]) => {
+      const rows = savedCodes(set).sort(codeSort), saved = rows.length > 0;
+      const shown = saved ? rows : pairs(DEFAULT_CODES[set]).map(([c, n], i) => ({ Title: c, Description: c === n ? "" : n, SortOrder: i + 1 }));
+      return `<div class="card"><div class="bar"><h3 style="margin:0">${esc(title)}</h3><span class="small" style="margin-left:10px;color:#c9d1db;font-weight:400;text-transform:none;letter-spacing:0">${esc(note)}</span><span class="grow"></span>
+          ${saved ? `<button class="btn sm primary" data-add="${set}" ${missing ? "disabled" : ""}>+ Add code</button>`
+                  : `<button class="btn sm primary" data-seed="${set}" ${missing ? "disabled" : ""}>Save this list to SharePoint so it can be changed</button>`}</div>
+        ${saved ? "" : `<p class="small muted">This is the starting list from the app's settings. Save it to SharePoint first, then codes can be added, changed or switched off.</p>`}
+        <table><thead><tr><th style="width:90px">Code</th><th>Meaning</th><th style="width:70px">Order</th><th style="width:80px">In use</th><th></th></tr></thead><tbody>
+        ${shown.map(c => `<tr class="${isActive(c) ? "" : "muted"}"><td class="mono"><b>${esc(c.Title)}</b></td><td>${esc(c.Description || "")}</td><td>${esc(c.SortOrder ?? "")}</td><td>${isActive(c) ? "Yes" : "No"}</td>
+          <td style="text-align:right">${c._pending ? `<span class="tag info">waiting</span> ` : ""}${saved ? `<button class="btn sm" data-ed="${esc(c.ClientRef || c.id)}">Edit</button>` : ""}</td></tr>`).join("")}
+        </tbody></table></div>`; }).join("")}
+    <div class="card small">Switching a code off (In use: No) stops it being offered on new records; firearms that already have it keep it.
+      Changing a code's letters doesn't change firearms already recorded with the old code - they show "old value - please choose" until edited.</div>`;
+  $$("[data-add]").forEach(b => b.onclick = () => codeDialog(b.dataset.add, null));
+  $$("[data-ed]").forEach(b => b.onclick = () => { const c = (D.codes || []).find(x => (x.ClientRef || x.id) === b.dataset.ed); if (c) codeDialog(c.CodeSet, c); });
+  $$("[data-seed]").forEach(b => b.onclick = async () => {
+    const set = b.dataset.seed; b.disabled = true;
+    const list = pairs(DEFAULT_CODES[set]);
+    for (const [i, [c, n]] of list.entries()) {
+      const ref = newRef(), f = { Title: c, Description: c === n ? "" : n, CodeSet: set, SortOrder: i + 1, Active: "Yes" };
+      mergeLocal(LISTS.codes, ref, f);
+      await enqueue({ kind: "upsert", list: LISTS.codes, ref, fields: f, label: `${set} code · ${c}` });
+    }
+    toast(`${list.length} ${set} codes saved`); pageCodes();
+  });
+}
+function codeDialog(set, c) {
+  openDialog({ title: (c ? "Edit " : "Add ") + set.toLowerCase() + " code",
+    body: `<div class="grid2"><label>Code *<input type="text" name="Title" maxlength="12" value="${esc(c?.Title || "")}" style="text-transform:uppercase"></label>
+        <label>Order<input type="number" name="SortOrder" min="1" value="${esc(c?.SortOrder ?? (savedCodes(set).length + 1))}"></label></div>
+      <label>Meaning${set === "Type" ? "" : " *"}<input type="text" name="Description" value="${esc(c?.Description || "")}"></label>
+      <label>In use<select name="Active">${["Yes", "No"].map(x => `<option ${x === (isActive(c || {}) ? "Yes" : "No") ? "selected" : ""}>${x}</option>`).join("")}</select></label>`,
+    onSubmit: async f => {
+      f.Title = f.Title.toUpperCase();
+      if (!f.Title || (set !== "Type" && !f.Description)) { toast(set === "Type" ? "The code is needed" : "Code and meaning are needed"); return false; }
+      if (savedCodes(set).some(x => x !== c && String(x.Title).toUpperCase() === f.Title)) { toast(`${f.Title} is already a ${set.toLowerCase()} code`); return false; }
+      if (Number(f.SortOrder)) f.SortOrder = Number(f.SortOrder); else delete f.SortOrder;
+      f.CodeSet = set;
+      const ref = c?.ClientRef || newRef();
+      mergeLocal(LISTS.codes, ref, f);
+      await enqueue({ kind: "upsert", list: LISTS.codes, ref, fields: f, label: `${set} code · ${f.Title}` });
+      pageCodes();
+    } });
+}
+
 async function pageStaff() {
   const rows = [...D.staff].sort((a, b) => String(a.Title).localeCompare(String(b.Title)));
   $("#main").innerHTML = banners() + `<div class="bar"><h2>Staff &amp; roles</h2><span class="grow"></span><button class="btn primary" id="addStaff">+ Add person</button></div>
