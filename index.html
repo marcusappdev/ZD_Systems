@@ -66,7 +66,7 @@ let D = { holders: [], licences: [], firearms: [], staff: [], backgrounds: [], a
 const canEdit = () => S.role === "Admin" || S.role === "Officer";
 const isAdmin = () => S.role === "Admin";
 const SAMPLE_HOLDER = { GivenNames: "Sample", MiddleName: "James", Surname: "Holder", DateOfBirth: "1985-06-14", Sex: "M", Address: "Section 12, Allotment 4, Konedobu, National Capital District" };
-const SAMPLE_LIC = { Title: "ZD-000123", LicenceType: "Shooter", IssueDate: today(), ExpiryDate: addYears(today(), RULES.LICENCE_YEARS),
+const SAMPLE_LIC = { BarcodeNo: "GLCS2020-076240", Title: "ZD-000123", LicenceType: "Shooter", IssueDate: today(), ExpiryDate: addYears(today(), RULES.LICENCE_YEARS),
   SerialNo: "4471-22983-RB", Make: "Remington", FirearmType: "Shotgun", Calibre: "12 gauge", Purpose: "B" };
 const arrFor = list => list === LISTS.holders ? D.holders : list === LISTS.licences ? D.licences : list === LISTS.firearms ? D.firearms : list === LISTS.staff ? D.staff : null;
 const lic = ref => D.licences.find(l => l.ClientRef === ref);
@@ -176,7 +176,8 @@ async function bgImage(b) {
   if (IMGS["bg:" + b.fileId]) return IMGS["bg:" + b.fileId];
   let blob = await kvGet("bg:" + b.fileId);
   if (!blob && online()) { try { blob = await downloadFile(LISTS.backgrounds, b.fileId); await kvSet("bg:" + b.fileId, blob); } catch {} }
-  return blob ? (IMGS["bg:" + b.fileId] = await blobImage(blob)) : null;
+  // kept (not revoked): the background picker re-uses this picture's address for its thumbnails
+  return blob ? (IMGS["bg:" + b.fileId] = await loadImage(URL.createObjectURL(blob))) : null;
 }
 /* Photos belong to the holder */
 async function photoBlob(l) {
@@ -634,7 +635,8 @@ async function pageLicence() {
   const l = existing || { ClientRef: ref, HolderRef: h.ClientRef, LicenceStatus: "Active", IssueDate: today(), ExpiryDate: addYears(today(), RULES.LICENCE_YEARS), LicenceType: CHOICES.LICENCE_TYPES[0] || "" };
   const ro = !canEdit(), dis = ro ? "disabled" : "";
   const opt = (arr, v) => [...new Set([...(arr || []), ...(v ? [v] : [])])].map(o => `<option ${o === v ? "selected" : ""}>${esc(o)}</option>`).join("");
-  const actBg = D.backgrounds.filter(b => b.Active !== "No" && b.Active !== false);
+  // back-of-card artwork is never offered on its own; it goes with its front
+  const actBg = D.backgrounds.filter(b => b.Active !== "No" && b.Active !== false && !ZDCard.LAYOUTS[b.Layout]?.isBack);
   if (!S.card || S.card.ref !== ref) {
     const saved = D.backgrounds.find(b => b.name === l.CardBackground);
     S.card = saved ? { ref, bg: saved.fileId, orientation: saved.Orientation || "Landscape" }
@@ -668,6 +670,7 @@ async function pageLicence() {
           <div class="grid3"><label>Class * (not printed)<select name="Class" ${dis}>${codeOptions(CLASS_LIST, l.Class || "")}</select></label>
             <label>Licence type *<select name="LicenceType" ${dis}>${opt(CHOICES.LICENCE_TYPES, l.LicenceType)}</select></label>
             <label>Model (not printed)<input type="text" name="Model" value="${esc(l.Model)}" ${dis}></label></div>
+          <div class="grid2"><label>Barcode no. (back of the two-sided card · blank = licence no)<input type="text" name="BarcodeNo" value="${esc(l.BarcodeNo)}" class="mono" placeholder="e.g. GLCS2020-076240" ${dis}></label></div>
           <label>Notes (not printed)<textarea name="Notes" ${dis}>${esc(l.Notes)}</textarea></label>
         </form>
         ${!isNew ? `<div class="card"><h3>History</h3><div id="hist" class="small muted">${online() ? "Loading…" : "History shows when you're online."}</div></div>` : ""}
@@ -677,6 +680,7 @@ async function pageLicence() {
             <button class="btn sm" id="pngBtn" title="Save the card as a picture (e.g. for the card printer's own software)">Save as picture</button>
             ${ro ? "" : `<button class="btn primary sm" id="printBtn">Print card</button>`}</div>
           <canvas id="cardCv" class="cardview"></canvas>
+          <div id="backWrap" hidden><div class="small muted" style="text-align:center;margin:12px 0 6px">Back of the card</div><canvas id="cardBackCv" class="cardview"></canvas></div>
           <div id="cardNote" class="small muted" style="text-align:center;margin-top:8px"></div>
           <p class="small muted" style="text-align:center;margin:8px 0 0">${l.LastPrinted ? `Last printed ${fmtDate(l.LastPrinted)} · ${num(l.PrintCount)} card${num(l.PrintCount) === 1 ? "" : "s"} printed` : "Not printed yet"}</p>
           ${ro ? "" : `<div class="small muted" style="margin-top:12px">Background</div><div class="bgpick" id="bgPick"></div>`}
@@ -696,18 +700,29 @@ async function pageLicence() {
     const bgMeta = D.backgrounds.find(b => b.fileId === S.card.bg);
     const bg = await bgFor(bgMeta, S.card.orientation);
     const photoB = await photoBlob(h);
-    return { bgMeta, bg, data: cardData(h, { ...l, ...val() }), photo: photoB ? await blobImage(photoB) : null };
+    // a two-sided design: its back is the background whose layout is the front layout's "back"
+    const T = bg.layout && ZDCard.LAYOUTS[bg.layout];
+    const backMeta = T?.back ? D.backgrounds.find(b => b.Layout === T.back) : null;
+    const back = T?.back ? (backMeta ? await bgFor(backMeta) : { image: null, layout: T.back, orientation: "Landscape" }) : null;
+    return { bgMeta, bg, back, backMissing: T?.back && !backMeta, data: cardData(h, { ...l, ...val() }), photo: photoB ? await blobImage(photoB) : null };
   };
   const drawPreview = async () => {
     const c = await cardParts();
     ZDCard.drawCard(cv, c.data, c.photo, c.bg, BRAND);
     cv.classList.toggle("portrait", cv.height > cv.width);
-    $("#cardNote").innerHTML = c.bg.preprinted ? `Preprinted card: only the photo and the details are printed - the background is shown here just to check the line-up.` : "";
+    $("#backWrap").hidden = !c.back;
+    if (c.back) ZDCard.drawCard($("#cardBackCv"), c.data, null, c.back, BRAND);
+    $("#cardNote").innerHTML = (c.bg.preprinted ? `Preprinted card: only the photo and the details are printed - the background is shown here just to check the line-up.` : "")
+      + (c.back ? `Two-sided card: <b>Print card</b> sends the front and then the back.` : "")
+      + (c.backMissing ? `<div style="color:var(--bad)">The back artwork isn't uploaded yet: add it under Card Backgrounds with Field layout "${esc(c.back.layout)}".</div>` : "");
   };
+  /* The exact pictures that go to the printer: [front] or [front, back] */
   const printCanvas = async () => {
     const c = await cardParts(), out = document.createElement("canvas");
     ZDCard.drawCard(out, c.data, c.photo, c.bg, BRAND, { print: true });
-    return { out, c };
+    const sides = [out];
+    if (c.back) { const bk = document.createElement("canvas"); ZDCard.drawCard(bk, c.data, null, c.back, BRAND, { print: true }); sides.push(bk); }
+    return { out, sides, c };
   };
   function schedulePreview() { clearTimeout(PREVIEW_T); PREVIEW_T = setTimeout(drawPreview, 150); }
   drawPreview();
@@ -727,16 +742,19 @@ async function pageLicence() {
     });
   }
   $("#pngBtn").onclick = async () => {
-    const { out } = await printCanvas();
-    out.toBlob(b => { const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = `Card-${(val().Title || "new").replace(/[^\w-]+/g, "_")}.png`; a.click(); }, "image/png");
+    const { sides } = await printCanvas(), base = `Card-${(val().Title || "new").replace(/[^\w-]+/g, "_")}`;
+    sides.forEach((cv_, i) => cv_.toBlob(b => { const a = document.createElement("a"); a.href = URL.createObjectURL(b);
+      a.download = sides.length > 1 ? `${base}-${i ? "back" : "front"}.png` : `${base}.png`; a.click(); }, "image/png"));
   };
   const printBtn = $("#printBtn");
   if (printBtn) printBtn.onclick = async () => {
     if (S.dirty || isNew) return toast("Save the licence first, then print the card");
     if (!["Active", "Expiring"].includes(statusOf(l)) && !confirm(`This licence is ${statusOf(l)}. Print a card anyway?`)) return;
     if (!(h.PhotoItemId || h._localKey) && !confirm("The holder has no photo. Print the card without one?")) return;
-    const { out, c } = await printCanvas();
-    ZDCard.printCard(out, printSettings());
+    const { sides, c } = await printCanvas();
+    if (c.backMissing) return toast("The back artwork for this card isn't uploaded yet (Card Backgrounds)");
+    try { ZDCard.printCard(sides, printSettings()); }
+    catch (e) { return toast(e.message); }
     const fields = { LastPrinted: today(), PrintCount: num(l.PrintCount) + 1 };
     mergeLocal(LISTS.licences, ref, fields);
     await enqueue({ kind: "upsert", list: LISTS.licences, ref, fields, label: `Card printed · ${l.Title}` });
@@ -803,7 +821,7 @@ async function bgFor(b, orientation = "Landscape") {
 }
 /* Holder + licence -> the field names the card layouts use */
 function cardData(h, l) {
-  return { ...h, ...l, GivenNames: firstNames(h), LicenceNo: l.Title, Registrar: BRAND.REGISTRAR || "" };   // middle name prints after the first name
+  return { ...h, ...l, GivenNames: firstNames(h), LicenceNo: l.Title, BarcodeNo: String(l.BarcodeNo || "").trim() || l.Title, Registrar: BRAND.REGISTRAR || "" };   // middle name prints after the first name
 }
 async function queuePhoto(h, blob, withFace) {
   const now = new Date(), stamp = `${ymd(now).replace(/-/g, "")}-${hhmm(now).replace(":", "")}${String(now.getSeconds()).padStart(2, "0")}`;
@@ -1048,6 +1066,7 @@ function pageSettings() {
         <label>Bleed - extra beyond each edge (mm)<input type="number" step="0.1" min="0" max="3" name="bleedMm" value="${p.bleedMm}"></label>
         <label>Move right (mm, minus = left)<input type="number" step="0.1" min="-5" max="5" name="offsetXmm" value="${p.offsetXmm}"></label>
         <label>Move down (mm, minus = up)<input type="number" step="0.1" min="-5" max="5" name="offsetYmm" value="${p.offsetYmm}"></label></div>
+      <label class="chk"><input type="checkbox" id="rotBack" ${p.rotateBack ? "checked" : ""}> Turn the back of two-sided cards upside down (tick this if the back comes out upside down)</label>
       <button class="btn" id="saveP">Save</button> <button class="btn" id="testP">Print test card</button>
       <canvas id="testCv" class="cardview" style="margin-top:14px"></canvas></div>
     <div class="card"><h3>Face check and offline work</h3>
@@ -1057,7 +1076,7 @@ function pageSettings() {
       <button class="btn" id="recheck">Do a face check now</button>
       ${DEMO ? ` <label class="chk" style="margin-top:12px"><input type="checkbox" id="fakeOff" ${FORCE_OFFLINE ? "checked" : ""}> Pretend to be offline (demo testing)</label>` : ""}</div>`;
   drawTestCard($("#testCv"));
-  const read = () => Object.fromEntries($$("#pf input").map(i => [i.name, Math.round((+i.value || 0) * 10) / 10]));
+  const read = () => ({ ...Object.fromEntries($$("#pf input").map(i => [i.name, Math.round((+i.value || 0) * 10) / 10])), rotateBack: $("#rotBack").checked });
   $("#saveP").onclick = () => { localStorage.setItem(PRINT_KEY(), JSON.stringify(read())); toast("Saved for this computer"); };
   $("#testP").onclick = () => ZDCard.printCard($("#testCv"), read());
   $("#recheck").onclick = () => { clearFacePass(); location.reload(); };
