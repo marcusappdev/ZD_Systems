@@ -839,7 +839,7 @@ async function pageLicence() {
           <div class="grid3"><label>Issued *<input type="date" name="IssueDate" value="${esc(String(l.IssueDate || "").slice(0, 10))}" ${dis}></label>
             <label>Expires *<input type="date" name="ExpiryDate" value="${esc(String(l.ExpiryDate || "").slice(0, 10))}" ${dis}></label>
             <label>Status<select name="LicenceStatus" ${dis}>${opt(CHOICES.STATUSES, l.LicenceStatus || "Active")}</select></label></div>
-          <div class="grid3"><label>Class * (not printed)<select name="Class" ${dis}>${codeOptions(codeList("Class"), l.Class || "")}</select></label>
+          <div class="grid3"><label>Class (not printed)<select name="Class" ${dis}>${codeOptions(codeList("Class"), l.Class || "")}</select></label>
             <label>Model (not printed)<input type="text" name="Model" value="${esc(l.Model)}" ${dis}></label><span></span></div>
           <div class="grid2"><label>Barcode no. (back of the two-sided card · blank = licence no)<input type="text" name="BarcodeNo" value="${esc(l.BarcodeNo)}" class="mono" placeholder="e.g. GLCS2020-076240" ${dis}></label></div>
           <label>Notes (not printed)<textarea name="Notes" ${dis}>${esc(l.Notes)}</textarea></label>
@@ -974,7 +974,7 @@ async function pageLicence() {
   if (saveBtn) saveBtn.onclick = async () => {
     const f = val();
     const need = ltc ? [["Title", "Licence no"], ["CarrierSurname", "Surname"], ["CarrierGivenNames", "First name"], ["CarryForRef", "Company firearm"], ["Purpose", "Purpose"], ["IssueDate", "Issued"], ["ExpiryDate", "Expires"]]
-      : [["Title", "Licence no"], ["Class", "Class"], ["Purpose", "Purpose"], ["IssueDate", "Issued"], ["ExpiryDate", "Expires"], ["SerialNo", "Serial no"]];
+      : [["Title", "Licence no"], ["Purpose", "Purpose"], ["IssueDate", "Issued"], ["ExpiryDate", "Expires"], ["SerialNo", "Serial no"]];
     const missing = need.filter(([k]) => !f[k]).map(x => x[1]);
     if (missing.length) return toast("Please fill in: " + missing.join(", "));
     if (f.ExpiryDate < f.IssueDate) return toast("The expiry date is before the issue date");
