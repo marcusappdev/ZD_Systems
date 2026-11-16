@@ -114,3 +114,7 @@ table.docs td{vertical-align:top}
 .pfx{display:flex;align-items:stretch}
 .pfx span{display:flex;align-items:center;padding:0 10px;background:#e7ebf0;border:1px solid var(--field);border-right:0;border-radius:8px 0 0 8px;font-family:ui-monospace,Consolas,monospace;font-weight:700}
 .pfx span + input{border-top-left-radius:0;border-bottom-left-radius:0}
+
+.nowrap{white-space:nowrap}
+/* a table never spills out of its box - it scrolls inside it instead */
+.card{overflow-x:auto}

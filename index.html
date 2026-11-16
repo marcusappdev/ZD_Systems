@@ -556,9 +556,12 @@ async function pageHolder() {
   const ls = D.licences.filter(l => l.HolderRef === ref).sort((a, b) => String(a.Title).localeCompare(String(b.Title)));
   const co = isCompany(h), kindLocked = ro || ls.length > 0;
   const guns = ls.filter(l => !isLTC(l)), ltcs = ls.filter(isLTC);
-  const ltcRow = l => { const g = lic(l.CarryForRef); return `<tr class="go" data-l="${esc(l.ClientRef)}"><td><img class="thumb" data-photo="${esc(l.ClientRef)}" alt=""></td><td class="mono"><b>${esc(l.Title)}</b></td>
-    <td><b>${esc(carrierName(l))}</b></td><td class="small">${g ? `<span class="mono">${esc(g.Title)}</span><div class="muted">SN ${esc(g.SerialNo || "")}${g.FirearmType ? " · " + esc(g.FirearmType) : ""}</div>` : `<span class="muted">firearm not found</span>`}</td><td title="${esc(purposeName(l.Purpose))}">${esc(l.Purpose)}</td>
-    <td>${fmtDate(l.ExpiryDate)}</td><td><span class="tag ${STATUS_TAG[statusOf(l)] || ""}">${statusOf(l)}</span>${l._pending ? ` <span class="tag info">waiting</span>` : ""}</td><td>${faceTag(l)}</td></tr>`; };
+  // six columns so it fits the box: status under the number, face under the carrier
+  const ltcRow = l => { const g = lic(l.CarryForRef); return `<tr class="go" data-l="${esc(l.ClientRef)}"><td style="width:52px"><img class="thumb" data-photo="${esc(l.ClientRef)}" alt=""></td>
+    <td><b class="mono">${esc(l.Title)}</b><div style="margin-top:4px"><span class="tag ${STATUS_TAG[statusOf(l)] || ""}">${statusOf(l)}</span>${l._pending ? ` <span class="tag info">waiting</span>` : ""}</div></td>
+    <td><b>${esc(carrierName(l))}</b><div style="margin-top:4px">${faceTag(l)}</div></td>
+    <td class="small">${g ? `<span class="mono">${esc(g.Title)}</span><div class="muted nowrap">SN ${esc(g.SerialNo || "")}${g.FirearmType ? " · " + esc(g.FirearmType) : ""}</div>` : `<span class="muted">firearm not found</span>`}</td>
+    <td title="${esc(purposeName(l.Purpose))}">${esc(l.Purpose)}</td><td class="nowrap">${fmtDate(l.ExpiryDate)}</td></tr>`; };
   $("#main").innerHTML = banners() + `
     <div class="bar"><a href="#/" class="btn sm">← Licence Holders</a><h2>${isNew ? "New licence holder" : esc(fullName(h))}</h2>${co && !isNew ? `<span class="tag">Company</span>` : ""}
       ${!isNew ? faceTag(h) : ""}${h._pending ? ` <span class="tag info">waiting to send</span>` : ""}<span class="grow"></span>
@@ -595,7 +598,7 @@ async function pageHolder() {
             : `<p class="muted small">No licensed firearms yet.</p>`}</div>
         ${co && !isNew ? `<div class="card"><div class="bar"><h3 style="margin:0">Licences to carry (LTC)</h3><span class="grow"></span>
             ${!ro ? guns.length ? `<a class="btn primary sm" href="#/newlicence/${encodeURIComponent(ref)}/LTC">+ Add licence to carry</a>` : `<span class="small muted">Add a company firearm first</span>` : ""}</div>
-          ${ltcs.length ? `<table><thead><tr><th></th><th>LTC No</th><th>Carrier</th><th>Firearm</th><th>Purpose</th><th>Expires</th><th>Status</th><th>Face</th></tr></thead><tbody>${ltcs.map(ltcRow).join("")}</tbody></table>`
+          ${ltcs.length ? `<table><thead><tr><th></th><th>LTC No</th><th>Carrier</th><th>Firearm</th><th>Purpose</th><th>Expires</th></tr></thead><tbody>${ltcs.map(ltcRow).join("")}</tbody></table>`
             : `<p class="muted small">No licences to carry yet. Each person who carries one of the company's firearms gets their own LTC, with their photo and details.</p>`}</div>` : ""}
         ${!isNew ? `<div class="card"><h3>History</h3><div id="hist" class="small muted">${online() ? "Loading…" : "History shows when you're online."}</div></div>` : ""}
       </div>
