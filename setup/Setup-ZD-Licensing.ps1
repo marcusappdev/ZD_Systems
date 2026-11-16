@@ -144,6 +144,7 @@ Ensure-Field $A "Details" "Note"
 Ensure-Field $A "LicenceRef" "Text" -Indexed
 Ensure-Field $A "HolderRef" "Text" -Indexed
 Ensure-Field $A "ClientRef" "Text" -Indexed
+Ensure-Field $A "ActivityAt" "Text" -Indexed     # the Reports activity log searches by date
 
 # ---------------------------------------------------------------------
 Pause-Step "STEP 3 of 4 - Create the libraries ${Prefix}LicencePhotos, ${Prefix}CardBackgrounds and ${Prefix}Documents"

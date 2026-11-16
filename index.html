@@ -105,6 +105,8 @@ const norm = s => String(s || "").trim().toUpperCase();
   resolveRole();
   if (S.role === "None") return fatal(`You're signed in as <b>${esc(me())}</b>, but you're not on the ${esc(BRAND.SHORT)} staff list. Ask an administrator to add you under <b>Staff</b>.`, true);
   if (!(await faceGate())) return;
+  S.mobile = mobileView();
+  document.body.classList.toggle("mobile", S.mobile);
   $("#hdr").hidden = false;
   window.addEventListener("hashchange", () => route());   // not route(event): the event would count as "quiet" and skip the unsaved-changes question
   await convertOldRecords();
@@ -404,7 +406,7 @@ function logActivity(action, h, l, details = "") {
 
 /* ---------------- header, routing ---------------- */
 const NAV = [
-  ["", "Licence Holders", () => true], ["firearms", "Licensed Firearms", () => true], ["newholder", "+ New Holder", canEdit], ["face", "Find by Face", canEdit],
+  ["", "Licence Holders", () => true], ["firearms", "Licensed Firearms", () => true], ["newholder", "+ New Holder", canEdit], ["face", "Find by Face", canEdit], ["reports", "Reports", () => true],
   ["backgrounds", "Card Backgrounds", isAdmin], ["codes", "Codes", isAdmin], ["staff", "Staff", isAdmin], ["settings", "Settings", () => true]];
 function renderNav() {
   $("#logo").innerHTML = `${esc(String(BRAND.COMPANY).toUpperCase())}${DEMO ? "<small>demo</small>" : ""}`;
@@ -446,11 +448,12 @@ function route(quiet) {
     keep.forEach(([k, v]) => { if (f.elements[k]) f.elements[k].value = v; });
     markDirty(); f.dispatchEvent(new Event("input"));
   });
-  const allowed = { "": true, firearms: true, holders: true, holder: true, licence: true, newholder: canEdit(), newlicence: canEdit(), face: canEdit(), backgrounds: isAdmin(), codes: isAdmin(), staff: isAdmin(), settings: true };
+  if (S.mobile) return mobileRoute(next, param);
+  const allowed = { "": true, reports: true, firearms: true, holders: true, holder: true, licence: true, newholder: canEdit(), newlicence: canEdit(), face: canEdit(), backgrounds: isAdmin(), codes: isAdmin(), staff: isAdmin(), settings: true };
   if (!allowed[next]) { location.hash = "#/"; return; }
   renderNav();
   ({ "": pageHolders, firearms: pageRegister, holders: pageHolders, holder: pageHolder, newholder: pageHolder, licence: pageLicence, newlicence: pageLicence,
-     face: pageFace, backgrounds: pageBackgrounds, codes: pageCodes, staff: pageStaff, settings: pageSettings })[next]();
+     face: pageFace, reports: pageReports, backgrounds: pageBackgrounds, codes: pageCodes, staff: pageStaff, settings: pageSettings })[next]();
 }
 function banners() {
   let h = "";
@@ -1382,6 +1385,222 @@ async function deleteDoc(h, d) {
     if (!notSent) logActivity("Document deleted", h, d.LicenceRef ? lic_(d.LicenceRef) : null, `${d.DocType || ""}: ${d.OriginalName || d.name}`);
     toast("Document deleted"); route(true);
   } catch (e) { toast(isForbidden(e) ? "SharePoint refused this (no permission)" : e.message); }
+}
+
+/* =====================================================================
+   REPORTS - activity log for a date range, one holder with all their
+   licences, and overdue (expired, not renewed) licences. Each can be
+   printed or downloaded for Excel.
+   ===================================================================== */
+function downloadCsv(name, head, rows) {
+  const q = v => { const t = String(v ?? ""); return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+  const text = "﻿" + [head, ...rows].map(r => r.map(q).join(",")).join("\r\n");   // the BOM makes Excel read it as UTF-8
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" })); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+const REPORTS = [["activity", "Activity log"], ["holder", "Licence holder"], ["overdue", "Overdue licences"]];
+const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
+const whenText = at => `${fmtDate(String(at || "").slice(0, 10))} ${String(at || "").slice(11, 16)}`;
+
+function pageReports() {
+  const which = REPORTS.some(r => r[0] === S.param) ? S.param : "activity";       // #/reports/<which>[/<holder ref>]
+  $("#main").innerHTML = banners() + `<div class="bar noprint"><h2>Reports</h2><span class="grow"></span>
+      ${REPORTS.map(([k, t]) => `<a class="btn sm ${k === which ? "primary" : ""}" href="#/reports/${k}">${t}</a>`).join(" ")}</div>
+    <div id="rep"></div>`;
+  ({ activity: repActivity, holder: repHolder, overdue: repOverdue })[which]();
+}
+// a report's own header: its title, what it covers, when it was made, and the Print / Download buttons
+const repHead = (title, sub) => `<div class="bar"><div><h2 style="margin:0">${esc(title)}</h2><div class="small rep-sub">${sub} · produced ${esc(fmtDate(today()))} ${hhmm(new Date())} by ${esc(me())}</div></div>
+  <span class="grow"></span><span class="noprint"><button class="btn sm" id="repCsv" type="button">Download (Excel)</button> <button class="btn sm" id="repPrint" type="button">Print</button></span></div>`;
+function wireRepButtons(csv) { $("#repPrint").onclick = () => window.print(); $("#repCsv").onclick = csv; }
+
+/* ---- Activity log for a date range (default today) ---- */
+async function activityBetween(from, to) {
+  const hi = to + " 99";                                  // ActivityAt is "YYYY-MM-DD HH:MM"
+  if (DEMO) return (await listItems(LISTS.activity)).filter(r => String(r.ActivityAt || "") >= from && String(r.ActivityAt || "") <= hi);
+  const rows = [];
+  let url = `/sites/${siteId}/lists/${LISTS.activity}/items?$filter=fields/ActivityAt ge '${from}' and fields/ActivityAt le '${hi}'&expand=fields&$top=500`;
+  while (url) { const j = await graph(url, { headers: { Prefer: "HonorNonIndexedQueriesWarningMayFailRandomly" } }); rows.push(...j.value.map(i => i.fields)); url = j["@odata.nextLink"]; }
+  return rows;
+}
+function repActivity() {
+  S.repFrom = S.repFrom || today(); S.repTo = S.repTo || today();
+  $("#rep").innerHTML = `<div class="card noprint"><div class="bar" style="flex-wrap:wrap;gap:10px">
+      <label style="margin:0">From<input type="date" id="rFrom" value="${S.repFrom}"></label>
+      <label style="margin:0">To<input type="date" id="rTo" value="${S.repTo}"></label>
+      <span style="align-self:flex-end">${[["Today", 0], ["Last 7 days", 6], ["Last 30 days", 29]].map(([t, n]) => `<button class="btn sm" type="button" data-days="${n}">${t}</button>`).join(" ")}</span>
+      <label style="margin:0;flex:1;min-width:200px">Filter<input type="search" id="rQ" placeholder="Action, name, licence no, staff…" value="${esc(S.repQ || "")}"></label></div></div>
+    <div class="card" id="repBody"><p class="muted">Loading…</p></div>`;
+  let rows = [];
+  const show = () => {
+    const q = String($("#rQ").value || "").toLowerCase(); S.repQ = $("#rQ").value;
+    const list = rows.map(r => ({ ...r, who: r.HolderRef ? fullName(holder(r.HolderRef) || {}) : "" }))
+      .filter(r => !q || [r.Title, r.who, r.LicenceNo, r.ActivityBy, r.Details].some(v => String(v || "").toLowerCase().includes(q)))
+      .sort((a, b) => String(b.ActivityAt).localeCompare(String(a.ActivityAt)));
+    const range = S.repFrom === S.repTo ? fmtDate(S.repFrom) : `${fmtDate(S.repFrom)} to ${fmtDate(S.repTo)}`;
+    $("#repBody").innerHTML = repHead("Activity log", `${esc(range)} · ${list.length} entr${list.length === 1 ? "y" : "ies"}${q ? ` matching "${esc(q)}"` : ""}`)
+      + (list.length ? `<table><thead><tr><th>When</th><th>Action</th><th>Holder</th><th>Licence</th><th>By</th><th>Details</th></tr></thead><tbody>
+        ${list.map(r => `<tr><td class="nowrap mono small">${esc(whenText(r.ActivityAt))}</td><td><b>${esc(r.Title)}</b></td>
+          <td>${r.HolderRef && holder(r.HolderRef) ? `<a href="#/holder/${encodeURIComponent(r.HolderRef)}">${esc(r.who)}</a>` : ""}</td>
+          <td class="mono">${r.LicenceRef && lic(r.LicenceRef) ? `<a href="#/licence/${encodeURIComponent(r.LicenceRef)}">${esc(r.LicenceNo)}</a>` : esc(r.LicenceNo || "")}</td>
+          <td class="small">${esc(r.ActivityBy)}</td><td class="small muted">${esc(r.Details || "")}</td></tr>`).join("")}</tbody></table>`
+        : `<p class="muted">Nothing recorded${q ? " matching the filter" : ""} in this period.</p>`);
+    wireRepButtons(() => downloadCsv(`ZD Activity ${S.repFrom}${S.repTo !== S.repFrom ? " to " + S.repTo : ""}.csv`, ["When", "Action", "Holder", "Licence no", "By", "Details"],
+      list.map(r => [String(r.ActivityAt || ""), r.Title, r.who, r.LicenceNo, r.ActivityBy, r.Details])));
+  };
+  const load = async () => {
+    S.repFrom = $("#rFrom").value || today(); S.repTo = $("#rTo").value || S.repFrom;
+    if (S.repTo < S.repFrom) { S.repTo = S.repFrom; $("#rTo").value = S.repTo; }
+    $("#repBody").innerHTML = `<p class="muted">Loading…</p>`;
+    try { rows = await activityBetween(S.repFrom, S.repTo); show(); }
+    catch (e) { $("#repBody").innerHTML = `<p style="color:var(--bad)">${isNetErr(e) ? "The activity log needs an internet connection." : "The activity log couldn't be loaded: " + esc(e.message)}</p>`; }
+  };
+  $("#rFrom").onchange = load; $("#rTo").onchange = load; $("#rQ").oninput = () => rows.length && show();
+  $$("[data-days]").forEach(b => b.onclick = () => { $("#rTo").value = today(); $("#rFrom").value = addDays(today(), -Number(b.dataset.days)); load(); });
+  load();
+}
+
+/* ---- One licence holder with all of their licences ---- */
+function repHolder() {
+  const ref = S.sub;
+  const h = ref && holder(ref);
+  $("#rep").innerHTML = `<div class="card noprint"><label style="margin:0">Find the licence holder<input type="search" id="rhQ" placeholder="Name, company, licence or serial no…" autocomplete="off"></label><div id="rhList"></div></div>
+    <div id="repBody">${h ? "" : `<div class="card"><p class="muted">Choose a licence holder above.</p></div>`}</div>`;
+  $("#rhQ").oninput = () => {
+    const q = $("#rhQ").value.trim().toLowerCase();
+    const hits = q.length < 2 ? [] : D.holders.filter(x => [fullName(x), personName(x), x.CompanyRegNo, x.Phone].some(v => String(v || "").toLowerCase().includes(q))
+      || D.licences.some(l => l.HolderRef === x.ClientRef && [l.Title, l.SerialNo, carrierName(l)].some(v => String(v || "").toLowerCase().includes(q)))).slice(0, 12);
+    $("#rhList").innerHTML = hits.length ? `<ul class="plain" style="margin-top:10px">${hits.map(x => `<li><a href="#/reports/holder/${encodeURIComponent(x.ClientRef)}"><b>${esc(fullName(x))}</b></a>
+      <span class="small muted">${isCompany(x) ? "Company" : "Born " + esc(fmtDate(x.DateOfBirth))} · ${D.licences.filter(l => l.HolderRef === x.ClientRef).length} licence(s)</span></li>`).join("")}</ul>` : q.length >= 2 ? `<p class="small muted">No match.</p>` : "";
+  };
+  if (!h) return;
+  const ls = D.licences.filter(l => l.HolderRef === ref).sort((a, b) => (isLTC(a) - isLTC(b)) || String(a.Title).localeCompare(String(b.Title)));
+  const docs = docsFor(h), co = isCompany(h);
+  const info = (co ? [["Company", fullName(h)], ["Registration (IPA) no", h.CompanyRegNo], ["Owner / CEO", personName(h) + (h.RepRole ? ", " + h.RepRole : "")]]
+    : [["Name", fullName(h)], ["Date of birth", fmtDate(h.DateOfBirth)], ["Sex", h.Sex]]).concat([["Phone", h.Phone], ["Email", h.Email], ["Address", h.Address], ["Face record", h.FaceStatus || "None"]]).filter(r => r[1]);
+  $("#repBody").innerHTML = `<div class="card">${repHead("Licence holder report", `${esc(fullName(h))} · ${ls.length} licence${ls.length === 1 ? "" : "s"}`)}
+    <div class="photo-box" style="margin-bottom:14px"><img class="m-photo" data-photo="${esc(ref)}" alt="">
+      <dl class="m-dl" style="flex:1">${info.map(([k, v]) => `<dt>${esc(k)}</dt><dd style="white-space:pre-line">${esc(v)}</dd>`).join("")}</dl></div>
+    <h3 class="subhead">Licences</h3>
+    ${ls.length ? `<table><thead><tr><th>Lic No</th><th>Type</th><th>Firearm</th><th>Class</th><th>Purpose</th>${co ? "<th>Carrier</th>" : ""}<th>Issued</th><th>Expires</th><th>Status</th><th>Printed</th></tr></thead><tbody>
+      ${ls.map(l => `<tr><td class="mono"><b>${esc(l.Title)}</b></td><td class="small">${esc(LTYPES[typeOf(l)].label)}</td><td>${esc(gunText(l))}${l.Calibre ? " · " + esc(l.Calibre) : ""}</td>
+        <td>${esc(l.Class || "")}</td><td title="${esc(purposeName(l.Purpose))}">${esc(l.Purpose || "")}</td>${co ? `<td>${isLTC(l) ? esc(carrierName(l)) : ""}</td>` : ""}
+        <td class="nowrap">${fmtDate(l.IssueDate)}</td><td class="nowrap">${fmtDate(l.ExpiryDate)}</td><td><span class="tag ${STATUS_TAG[statusOf(l)] || ""}">${statusOf(l)}</span></td>
+        <td class="nowrap small">${l.LastPrinted ? fmtDate(l.LastPrinted) : "—"}</td></tr>`).join("")}</tbody></table>` : `<p class="muted">No licences.</p>`}
+    ${docs.length ? `<h3 class="subhead">Documents</h3><table><thead><tr><th>Type</th><th>Document</th><th>For</th><th>Dated</th><th>Added</th></tr></thead><tbody>
+      ${docs.map(d => `<tr><td>${esc(d.DocType || "")}</td><td>${esc(d.OriginalName || d.name || "")}${d.DocDescription ? `<div class="small muted">${esc(d.DocDescription)}</div>` : ""}</td>
+        <td class="small">${d.LicenceNo ? "Lic " + esc(d.LicenceNo) : "Holder"}</td><td class="nowrap">${fmtDate(d.DocDate)}</td><td class="nowrap small">${fmtDate(String(d.UploadedAt || "").slice(0, 10))}</td></tr>`).join("")}</tbody></table>` : ""}
+  </div>`;
+  fillThumbs();
+  wireRepButtons(() => downloadCsv(`ZD Holder ${safeName(fullName(h))} ${today()}.csv`,
+    ["Holder", "Lic No", "Type", "Serial no", "Make", "Model", "Firearm type", "Calibre", "Class", "Purpose", "Carrier", "Issued", "Expires", "Status", "Last printed"],
+    ls.map(l => [fullName(h), l.Title, LTYPES[typeOf(l)].label, l.SerialNo, l.Make, l.Model, l.FirearmType, l.Calibre, l.Class, l.Purpose, isLTC(l) ? carrierName(l) : "",
+      String(l.IssueDate || "").slice(0, 10), String(l.ExpiryDate || "").slice(0, 10), statusOf(l), String(l.LastPrinted || "").slice(0, 10)])));
+}
+
+/* ---- Overdue: past the expiry date and not renewed (suspended / cancelled licences are left out) ---- */
+function repOverdue() {
+  const t = today(), soon = !!S.repSoon;
+  const live = l => !["Suspended", "Cancelled"].includes(l.LicenceStatus || "Active") && l.ExpiryDate;
+  const over = D.licences.filter(l => live(l) && String(l.ExpiryDate).slice(0, 10) < t).sort((a, b) => String(a.ExpiryDate).localeCompare(String(b.ExpiryDate)));
+  const coming = soon ? D.licences.filter(l => live(l) && String(l.ExpiryDate).slice(0, 10) >= t && String(l.ExpiryDate).slice(0, 10) <= addDays(t, 60))
+    .sort((a, b) => String(a.ExpiryDate).localeCompare(String(b.ExpiryDate))) : [];
+  const who = l => { const h = holder(l.HolderRef) || {}; return { h, name: fullName(h), phone: isLTC(l) ? l.CarrierPhone || h.Phone : h.Phone }; };
+  const table = (list, overdue) => list.length ? `<table><thead><tr><th>Lic No</th><th>Type</th><th>Holder</th><th>Phone</th><th>Firearm</th><th>Expir${overdue ? "ed" : "es"}</th><th>${overdue ? "Days overdue" : "Days left"}</th></tr></thead><tbody>
+    ${list.map(l => { const w = who(l), d = daysBetween(t, String(l.ExpiryDate).slice(0, 10));
+      return `<tr><td class="mono"><a href="#/licence/${encodeURIComponent(l.ClientRef)}"><b>${esc(l.Title)}</b></a></td><td class="small">${esc(LTYPES[typeOf(l)].label)}</td>
+      <td><a href="#/holder/${encodeURIComponent(l.HolderRef)}">${esc(w.name)}</a>${isLTC(l) ? `<div class="small">Carrier: ${esc(carrierName(l))}</div>` : ""}</td><td class="nowrap">${esc(w.phone || "")}</td>
+      <td class="small">${esc(gunText(l))}</td><td class="nowrap">${fmtDate(l.ExpiryDate)}</td><td><b style="color:${overdue ? "var(--bad)" : "var(--warn)"}">${Math.abs(d)}</b></td></tr>`; }).join("")}</tbody></table>`
+    : `<p class="muted">${overdue ? "No overdue licences." : "None in the next 60 days."}</p>`;
+  $("#rep").innerHTML = `<div class="card noprint"><label class="chk" style="margin:0"><input type="checkbox" id="rSoon" ${soon ? "checked" : ""}> Also list licences expiring in the next 60 days</label></div>
+    <div class="card">${repHead("Overdue licences", `Past their expiry date and not renewed · ${over.length} licence${over.length === 1 ? "" : "s"}`)}${table(over, true)}
+      ${soon ? `<h3 class="subhead" style="margin-top:20px">Expiring in the next 60 days (${coming.length})</h3>${table(coming, false)}` : ""}</div>`;
+  $("#rSoon").onchange = () => { S.repSoon = $("#rSoon").checked; repOverdue(); };
+  wireRepButtons(() => downloadCsv(`ZD Overdue licences ${t}.csv`, ["Lic No", "Type", "Holder", "Carrier", "Phone", "Serial no", "Firearm", "Expiry", "Days overdue (- = days left)", "Status"],
+    [...over, ...coming].map(l => { const w = who(l); return [l.Title, LTYPES[typeOf(l)].label, w.name, isLTC(l) ? carrierName(l) : "", w.phone, l.SerialNo, gunText(l),
+      String(l.ExpiryDate).slice(0, 10), -daysBetween(t, String(l.ExpiryDate).slice(0, 10)), statusOf(l)]; })));
+}
+
+/* =====================================================================
+   MOBILE VIEW - phones and tablets. Same sign-in and face check, then
+   look-up only: search for a holder or a firearm and view the details.
+   Nothing can be changed from here, whatever the person's role.
+   Testing: add ?view=mobile (or ?view=desktop) to the address.
+   ===================================================================== */
+function mobileView() {
+  const v = new URLSearchParams(location.search).get("view");
+  try { if (v === "mobile" || v === "desktop") sessionStorage.setItem("zdView", v); } catch {}
+  let saved = null; try { saved = sessionStorage.getItem("zdView"); } catch {}
+  if (saved) return saved === "mobile";
+  return matchMedia("(pointer: coarse)").matches && Math.min(screen.width, screen.height) < 900;   // a touch screen smaller than a laptop
+}
+function mobileRoute(next, param) {
+  $("#nav").innerHTML = "";
+  window.scrollTo(0, 0);
+  if (next === "holder" && holder(param)) return mHolder(param);
+  if (next === "licence" && lic(param)) return mLicence(param);
+  if (next) { location.hash = "#/"; return; }
+  mSearch();
+}
+const mItemHolder = h => { const n = D.licences.filter(l => l.HolderRef === h.ClientRef).length;
+  return `<a class="m-item" href="#/holder/${encodeURIComponent(h.ClientRef)}"><img data-photo="${esc(h.ClientRef)}" alt="">
+    <span><b>${esc(fullName(h))}</b><span class="small muted">${isCompany(h) ? "Company · " + esc(personName(h)) : "Born " + esc(fmtDate(h.DateOfBirth) || "—")}</span>
+    <span class="small">${n} licence${n === 1 ? "" : "s"}</span></span></a>`; };
+const mItemLicence = l => { const h = holder(l.HolderRef) || {}, st = statusOf(l);
+  return `<a class="m-item" href="#/licence/${encodeURIComponent(l.ClientRef)}"><img data-photo="${esc(isLTC(l) ? l.ClientRef : h.ClientRef || "")}" alt="">
+    <span><b class="mono">${esc(l.Title)}</b> <span class="tag ${STATUS_TAG[st] || ""}">${st}</span>
+    <span class="small">${esc(isLTC(l) ? carrierName(l) + " · " + fullName(h) : fullName(h))}</span>
+    <span class="small muted">${esc(gunText(l))}</span></span></a>`; };
+function mSearch() {
+  $("#main").innerHTML = banners() + `<div class="m-search"><input type="search" id="mq" placeholder="Name, company, licence or serial no" autocomplete="off" value="${esc(S.mq || "")}">
+    <p class="small muted" style="margin:6px 2px 0">Look-up only - changes are made on a computer.</p></div><div id="mres"></div>`;
+  const run = () => {
+    S.mq = $("#mq").value; const q = S.mq.trim().toLowerCase();
+    if (q.length < 2) { $("#mres").innerHTML = `<p class="muted" style="text-align:center;margin-top:30px">Type at least 2 letters or numbers.</p>`; return; }
+    const has = vals => vals.some(v => String(v || "").toLowerCase().includes(q));
+    const hs = D.holders.filter(h => has([fullName(h), personName(h), h.CompanyRegNo, h.Phone])).sort((a, b) => sortName(a).localeCompare(sortName(b)));
+    const ls = D.licences.filter(l => has([l.Title, l.SerialNo, l.Make, carrierName(l), l.CarrierPhone])).sort((a, b) => String(a.Title).localeCompare(String(b.Title)));
+    $("#mres").innerHTML = (hs.length ? `<h3 class="m-h">Licence holders (${hs.length})</h3>${hs.slice(0, 30).map(mItemHolder).join("")}` : "")
+      + (ls.length ? `<h3 class="m-h">Licences (${ls.length})</h3>${ls.slice(0, 30).map(mItemLicence).join("")}` : "")
+      || `<p class="muted" style="text-align:center;margin-top:30px">Nothing found for "${esc(S.mq.trim())}".</p>`;
+    fillThumbs();
+  };
+  $("#mq").oninput = run; run();
+}
+const mRows = rows => `<dl class="m-dl">${rows.filter(r => r[1]).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("")}</dl>`;
+const codeText = (set, c) => c ? esc(c) + (codeName(set, c) && codeName(set, c) !== c ? ` <span class="muted">- ${esc(codeName(set, c))}</span>` : "") : "";
+function mHolder(ref) {
+  const h = holder(ref), co = isCompany(h);
+  const ls = D.licences.filter(l => l.HolderRef === ref).sort((a, b) => (isLTC(a) - isLTC(b)) || String(a.Title).localeCompare(String(b.Title)));
+  $("#main").innerHTML = banners() + `<a class="btn sm" href="#/">← Search</a>
+    <div class="card m-head"><img class="m-photo" data-photo="${esc(ref)}" alt=""><div><h2>${esc(fullName(h))}</h2>
+      <div class="small muted">${co ? "Company" : "Licence holder"}</div><div style="margin-top:8px">${faceTag(h)}</div></div></div>
+    <div class="card">${mRows((co ? [["Owner / CEO", esc(personName(h) + (h.RepRole ? ", " + h.RepRole : ""))], ["IPA no", esc(h.CompanyRegNo || "")]]
+      : [["Born", esc(fmtDate(h.DateOfBirth))], ["Sex", esc(h.Sex || "")]]).concat([["Phone", h.Phone ? `<a href="tel:${esc(h.Phone)}">${esc(h.Phone)}</a>` : ""], ["Email", esc(h.Email || "")],
+      ["Address", h.Address ? `<span style="white-space:pre-line">${esc(h.Address)}</span>` : ""]]))}</div>
+    <h3 class="m-h">Licences (${ls.length})</h3>${ls.map(mItemLicence).join("") || `<p class="muted">No licences.</p>`}`;
+  fillThumbs();
+}
+function mLicence(ref) {
+  const l = lic(ref), h = holder(l.HolderRef) || {}, st = statusOf(l), ltc = isLTC(l), t = typeOf(l);
+  const gun = ltc ? lic(l.CarryForRef) || l : l;
+  $("#main").innerHTML = banners() + `<a class="btn sm" href="#/holder/${encodeURIComponent(h.ClientRef || "")}">← ${esc(fullName(h))}</a>
+    <div class="m-status ${STATUS_TAG[st] || ""}">${esc(st)}${st === "Expired" ? ` · ${daysBetween(String(l.ExpiryDate).slice(0, 10), today())} days ago` : ""}</div>
+    <div class="card m-head"><img class="m-photo" data-photo="${esc(ltc ? ref : h.ClientRef || "")}" alt=""><div>
+      <div class="small muted">${esc(LTYPES[t].label)}</div><h2 class="mono">${esc(l.Title)}</h2>
+      <div><b>${esc(ltc ? carrierName(l) : t === "Company" ? personName(h) : fullName(h))}</b></div>
+      <div class="small">${ltc || t === "Company" ? esc(fullName(h)) : ""}</div>
+      ${ltc ? `<div style="margin-top:8px">${faceTag(l)}</div>` : ""}</div></div>
+    ${ltc ? `<div class="card"><h3 class="m-h" style="margin-top:0">Person licensed to carry</h3>${mRows([["Born", esc(fmtDate(l.CarrierDOB))], ["Sex", esc(l.CarrierSex || "")],
+      ["Phone", l.CarrierPhone ? `<a href="tel:${esc(l.CarrierPhone)}">${esc(l.CarrierPhone)}</a>` : ""], ["Address", l.CarrierAddress ? `<span style="white-space:pre-line">${esc(l.CarrierAddress)}</span>` : ""]])}</div>` : ""}
+    <div class="card"><h3 class="m-h" style="margin-top:0">Firearm</h3>${mRows([["Serial no", `<b class="mono">${esc(gun.SerialNo || "")}</b>`], ["Make", esc(gun.Make || "")], ["Model", esc(gun.Model || "")],
+      ["Type", codeText("Type", gun.FirearmType)], ["Calibre", esc(gun.Calibre || "")], ["Class", codeText("Class", gun.Class)],
+      ["Company licence", ltc && lic(l.CarryForRef) ? `<a href="#/licence/${encodeURIComponent(l.CarryForRef)}" class="mono">${esc(lic(l.CarryForRef).Title)}</a>` : ""]])}</div>
+    <div class="card"><h3 class="m-h" style="margin-top:0">Licence</h3>${mRows([["Purpose", codeText("Purpose", l.Purpose)], ["Issued", esc(fmtDate(l.IssueDate))], ["Expires", `<b>${esc(fmtDate(l.ExpiryDate))}</b>`],
+      ["Status", `<span class="tag ${STATUS_TAG[st] || ""}">${esc(st)}</span>`], ["Card printed", esc(l.LastPrinted ? fmtDate(l.LastPrinted) : "Not yet")]])}</div>
+    ${t === "Company" && ltcsOf(l).length ? `<h3 class="m-h">Licences to carry this firearm</h3>${ltcsOf(l).map(mItemLicence).join("")}` : ""}`;
+  fillThumbs();
 }
 
 /* =====================================================================
