@@ -215,3 +215,8 @@ body.mobile .banner{margin:12px 14px 0;border-radius:12px}
 .m-facts dd{margin:0;font-weight:600;text-align:right}
 .m-facts a{color:var(--info);text-decoration:none}
 .m-code{display:inline-block;background:var(--brand);color:#fff;border-radius:6px;padding:0 6px;font-family:ui-monospace,Consolas,monospace;font-size:12px;margin-right:2px}
+
+/* purpose tick boxes (several purposes per licence) */
+fieldset.purposes{border:1px solid var(--line);border-radius:10px;padding:8px 14px 10px;margin:0 0 14px;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:2px 14px}
+fieldset.purposes legend{font-weight:600;font-size:13px;padding:0 6px}
+fieldset.purposes .chk{margin:4px 0;font-size:14px}

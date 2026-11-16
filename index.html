@@ -513,7 +513,7 @@ function pageRegister() {
       ${rows.slice(0, 500).map(l => { const st = statusOf(l), h = holder(l.HolderRef) || {}; return `<tr class="go" data-ref="${esc(l.ClientRef)}">
         <td><img class="thumb" data-photo="${esc(isLTC(l) ? l.ClientRef : h.ClientRef || "")}" alt=""></td><td class="mono"><b>${esc(l.Title)}</b>${typeOf(l) !== "Individual" ? `<div class="small muted" style="font-family:inherit">${esc(LTYPES[typeOf(l)].label)}</div>` : ""}</td>
         <td><b>${esc(fullName(h))}</b>${isLTC(l) ? `<div class="small">Carrier: ${esc(carrierName(l))}</div>` : ""}</td>
-        <td>${esc(gunText(l))}</td><td title="${esc(className(l.Class))}">${esc(l.Class)}</td><td title="${esc(purposeName(l.Purpose))}">${esc(l.Purpose)}</td><td>${fmtDate(l.ExpiryDate)}</td>
+        <td>${esc(gunText(l))}</td><td title="${esc(className(l.Class))}">${esc(l.Class)}</td><td title="${esc(purposeNames(l.Purpose))}">${esc(l.Purpose)}</td><td>${fmtDate(l.ExpiryDate)}</td>
         <td><span class="tag ${STATUS_TAG[st] || ""}">${st}</span>${l._pending ? ` <span class="tag info">waiting to send</span>` : ""}</td>
         <td>${faceTag(isLTC(l) ? l : h)}</td><td>${l.LastPrinted ? fmtDate(l.LastPrinted) + (num(l.PrintCount) > 1 ? ` <span class="muted">(${num(l.PrintCount)}×)</span>` : "") : `<span class="muted">—</span>`}</td></tr>`; }).join("")}
       </tbody></table>${rows.length > 500 ? `<p class="muted small" style="padding:8px">Showing the first 500 - search to narrow down.</p>` : ""}`
@@ -572,7 +572,7 @@ async function pageHolder() {
     <td><b class="mono">${esc(l.Title)}</b><div style="margin-top:4px"><span class="tag ${STATUS_TAG[statusOf(l)] || ""}">${statusOf(l)}</span>${l._pending ? ` <span class="tag info">waiting</span>` : ""}</div></td>
     <td><b>${esc(carrierName(l))}</b><div style="margin-top:4px">${faceTag(l)}</div></td>
     <td class="small">${g ? `<span class="mono">${esc(g.Title)}</span><div class="muted nowrap">SN ${esc(g.SerialNo || "")}${g.FirearmType ? " · " + esc(g.FirearmType) : ""}</div>` : `<span class="muted">firearm not found</span>`}</td>
-    <td title="${esc(purposeName(l.Purpose))}">${esc(l.Purpose)}</td><td class="nowrap">${fmtDate(l.ExpiryDate)}</td></tr>`; };
+    <td title="${esc(purposeNames(l.Purpose))}">${esc(l.Purpose)}</td><td class="nowrap">${fmtDate(l.ExpiryDate)}</td></tr>`; };
   $("#main").innerHTML = banners() + `
     <div class="bar"><a href="#/" class="btn sm">← Licence Holders</a><h2>${isNew ? "New licence holder" : esc(fullName(h))}</h2>${co && !isNew ? `<span class="tag">Company</span>` : ""}
       ${!isNew ? faceTag(h) : ""}${h._pending ? ` <span class="tag info">waiting to send</span>` : ""}<span class="grow"></span>
@@ -606,7 +606,7 @@ async function pageHolder() {
         <div class="card"><div class="bar"><h3 style="margin:0">${co ? "Company firearms (C licences)" : "Licensed firearms"}</h3><span class="grow"></span>
             ${!ro && !isNew ? `<a class="btn primary sm" href="#/newlicence/${encodeURIComponent(ref)}/${co ? "Company" : "Individual"}">+ Add ${co ? "company" : "licensed"} firearm</a>` : ""}</div>
           ${isNew ? `<p class="muted small">Save the holder first, then add their firearms - each gets its own licence number.</p>` : guns.length ? `<table><thead><tr><th>Lic No</th><th>Firearm</th><th>Class</th><th>Purpose</th><th>Expires</th><th>Status</th><th>Printed</th></tr></thead><tbody>
-            ${guns.map(l => `<tr class="go" data-l="${esc(l.ClientRef)}"><td class="mono"><b>${esc(l.Title)}</b></td><td>${esc(gunText(l))}</td><td title="${esc(className(l.Class))}">${esc(l.Class)}</td><td title="${esc(purposeName(l.Purpose))}">${esc(l.Purpose)}</td>
+            ${guns.map(l => `<tr class="go" data-l="${esc(l.ClientRef)}"><td class="mono"><b>${esc(l.Title)}</b></td><td>${esc(gunText(l))}</td><td title="${esc(className(l.Class))}">${esc(l.Class)}</td><td title="${esc(purposeNames(l.Purpose))}">${esc(l.Purpose)}</td>
               <td>${fmtDate(l.ExpiryDate)}</td><td><span class="tag ${STATUS_TAG[statusOf(l)] || ""}">${statusOf(l)}</span>${l._pending ? ` <span class="tag info">waiting</span>` : ""}</td><td>${l.LastPrinted ? fmtDate(l.LastPrinted) : "—"}</td></tr>`).join("")}</tbody></table>`
             : `<p class="muted small">No licensed firearms yet.</p>`}</div>
         ${co && !isNew ? `<div class="card"><div class="bar"><h3 style="margin:0">Licences to carry (LTC)</h3><span class="grow"></span>
@@ -822,8 +822,9 @@ async function pageLicence() {
           <h3 style="margin-top:18px">Licence to carry</h3>
           <div class="grid3"><label>Licence no (from the ${isCompany(h) ? "company" : "holder"})<input type="text" value="${esc(theNo)}" class="mono" disabled title="Change it on the holder - all of their licences follow"></label>
             <label>Company firearm *<select name="CarryForRef" ${dis}><option value="">- choose -</option>${coGuns.map(g => `<option value="${esc(g.ClientRef)}" ${g.ClientRef === l.CarryForRef ? "selected" : ""}>${esc(g.Title)} · SN ${esc(g.SerialNo || "")}${g.FirearmType ? " · " + esc(g.FirearmType) : ""}</option>`).join("")}</select></label>
-            <label>Purpose * (the letter prints)<select name="Purpose" ${dis}>${purposeOptions(l.Purpose || "")}</select></label></div>
+            <span></span></div>
           <div id="gunInfo" class="small muted" style="margin:-4px 0 12px"></div>
+          ${purposePicker(l.Purpose, dis)}
           <div class="grid3"><label>Issued *<input type="date" name="IssueDate" value="${esc(String(l.IssueDate || "").slice(0, 10))}" ${dis}></label>
             <label>Expires *<input type="date" name="ExpiryDate" value="${esc(String(l.ExpiryDate || "").slice(0, 10))}" ${dis}></label>
             <label>Status<select name="LicenceStatus" ${dis}>${opt(CHOICES.STATUSES, l.LicenceStatus || "Active")}</select></label></div>
@@ -832,7 +833,8 @@ async function pageLicence() {
         : `<h3>Licence &amp; firearm</h3>
           <div class="grid3"><label>Licence no (from the ${isCompany(h) ? "company" : "holder"})<input type="text" value="${esc(theNo)}" class="mono" disabled title="Change it on the holder - all of their licences follow"></label>
             <label>Serial no (SN) *<input type="text" name="SerialNo" value="${esc(l.SerialNo)}" class="mono" ${dis}></label>
-            <label>Purpose * (the letter prints)<select name="Purpose" ${dis}>${purposeOptions(l.Purpose || "")}</select></label></div>
+            <span></span></div>
+          ${purposePicker(l.Purpose, dis)}
           <div class="grid3"><label>Make<input type="text" name="Make" value="${esc(l.Make)}" ${dis}></label>
             <label>Type (printed)<select name="FirearmType" ${dis}>${codeOptions(codeList("Type"), l.FirearmType || "")}</select></label>
             <label>Calibre<input type="text" name="Calibre" value="${esc(l.Calibre)}" ${dis}></label></div>
@@ -866,7 +868,9 @@ async function pageLicence() {
   if (!isNew) wireDocs(h, l);
   // the officer types the number; the prefix (C / LTC) is added here
   const val = () => {
-    const f = Object.fromEntries([...new FormData(form)].map(([k, v]) => [k, String(v).trim()]));
+    const fd = new FormData(form);
+    const f = Object.fromEntries([...fd].filter(([k]) => k !== "PurposeCode").map(([k, v]) => [k, String(v).trim()]));
+    f.Purpose = purposeOrder(fd.getAll("PurposeCode").map(v => String(v).toUpperCase())).join("");   // e.g. "BEFG"
     f.Title = theNo; f.LicenceType = type;
     return f;
   };
@@ -1051,6 +1055,25 @@ function codeOptions(list, cur) {
     + (cur && !known ? `<option value="${esc(cur)}" selected>${esc(cur)} (old value - please choose)</option>` : "");
 }
 const purposeOptions = cur => codeOptions(codeList("Purpose"), cur);
+/* A licence can have several purposes. They are stored as the letters printed on the card,
+   in code-list order ("BEFG"), so a single letter ("B") reads exactly as before. */
+function purposeCodes(v) {
+  const t = String(v || "").toUpperCase().replace(/[\s,;/]+/g, "");
+  const known = [...new Set([...codeList("Purpose"), ...pairs(DEFAULT_CODES.Purpose)].map(p => String(p[0]).toUpperCase()))].sort((a, b) => b.length - a.length);
+  const out = []; let i = 0;
+  while (i < t.length) { const k = known.find(c => c && t.startsWith(c, i)) || t[i]; out.push(k); i += k.length; }
+  return [...new Set(out)];
+}
+const purposeOrder = codes => { const order = codeList("Purpose").map(p => String(p[0]).toUpperCase());
+  return [...codes].sort((a, b) => ((order.indexOf(a) + 1) || 99) - ((order.indexOf(b) + 1) || 99) || a.localeCompare(b)); };
+const purposeNames = v => purposeCodes(v).map(c => `${c} - ${purposeName(c) || "?"}`).join("\n");
+function purposePicker(cur, dis) {
+  const sel = purposeCodes(cur), list = codeList("Purpose");
+  const extra = sel.filter(c => !list.some(p => String(p[0]).toUpperCase() === c));     // an old code no longer in the list
+  return `<fieldset class="purposes" ${dis}><legend>Purpose * <span class="muted small">(tick all that apply - the letters print together, e.g. BEFG)</span></legend>
+    ${list.map(([c, n]) => `<label class="chk"><input type="checkbox" name="PurposeCode" value="${esc(c)}" ${sel.includes(String(c).toUpperCase()) ? "checked" : ""}> <b class="mono">${esc(c)}</b> ${esc(n)}</label>`).join("")}
+    ${extra.map(c => `<label class="chk"><input type="checkbox" name="PurposeCode" value="${esc(c)}" checked> <b class="mono">${esc(c)}</b> <span class="muted">(no longer in the list)</span></label>`).join("")}</fieldset>`;
+}
 /* Background settings from its library columns */
 async function bgFor(b, orientation = "Landscape") {
   if (!b) return { image: null, orientation, textColour: "Dark", showHeader: true };
@@ -1525,7 +1548,7 @@ function repHolder() {
     <h3 class="subhead">Licences</h3>
     ${ls.length ? `<table><thead><tr><th>Lic No</th><th>Type</th><th>Firearm</th><th>Class</th><th>Purpose</th>${co ? "<th>Carrier</th>" : ""}<th>Issued</th><th>Expires</th><th>Status</th><th>Printed</th></tr></thead><tbody>
       ${ls.map(l => `<tr><td class="mono"><b>${esc(l.Title)}</b></td><td class="small">${esc(LTYPES[typeOf(l)].label)}</td><td>${esc(gunText(l))}${l.Calibre ? " · " + esc(l.Calibre) : ""}</td>
-        <td>${esc(l.Class || "")}</td><td title="${esc(purposeName(l.Purpose))}">${esc(l.Purpose || "")}</td>${co ? `<td>${isLTC(l) ? esc(carrierName(l)) : ""}</td>` : ""}
+        <td>${esc(l.Class || "")}</td><td title="${esc(purposeNames(l.Purpose))}">${esc(l.Purpose || "")}</td>${co ? `<td>${isLTC(l) ? esc(carrierName(l)) : ""}</td>` : ""}
         <td class="nowrap">${fmtDate(l.IssueDate)}</td><td class="nowrap">${fmtDate(l.ExpiryDate)}</td><td><span class="tag ${STATUS_TAG[statusOf(l)] || ""}">${statusOf(l)}</span></td>
         <td class="nowrap small">${l.LastPrinted ? fmtDate(l.LastPrinted) : "—"}</td></tr>`).join("")}</tbody></table>` : `<p class="muted">No licences.</p>`}
     ${docs.length ? `<h3 class="subhead">Documents</h3><table><thead><tr><th>Type</th><th>Document</th><th>For</th><th>Dated</th><th>Added</th></tr></thead><tbody>
@@ -1672,7 +1695,7 @@ function mLicence(ref) {
     <h3 class="m-h">Firearm</h3>${mFacts([["Serial no", `<span class="mono">${esc(gun.SerialNo || "")}</span>`], ["Make", esc(gun.Make || "")], ["Model", esc(gun.Model || "")],
       ["Type", codeText("Type", gun.FirearmType)], ["Calibre", esc(gun.Calibre || "")], ["Class", codeText("Class", gun.Class)],
       ["Company licence", ltc && lic(l.CarryForRef) ? `<a href="#/licence/${encodeURIComponent(l.CarryForRef)}" class="mono">${esc(lic(l.CarryForRef).Title)}</a>` : ""]])}
-    <h3 class="m-h">Licence</h3>${mFacts([["Purpose", codeText("Purpose", l.Purpose)], ["Issued", esc(fmtDate(l.IssueDate))], ["Expires", esc(fmtDate(l.ExpiryDate))],
+    <h3 class="m-h">Licence</h3>${mFacts([["Purpose", purposeCodes(l.Purpose).map(c => codeText("Purpose", c)).join("<br>")], ["Issued", esc(fmtDate(l.IssueDate))], ["Expires", esc(fmtDate(l.ExpiryDate))],
       ["Status", mPill(st)], ["Card printed", esc(l.LastPrinted ? fmtDate(l.LastPrinted) : "Not yet")]])}
     ${t === "Company" && ltcsOf(l).length ? `<h3 class="m-h">Licences to carry this firearm <span>${ltcsOf(l).length}</span></h3>${ltcsOf(l).map(mItemLicence).join("")}` : ""}`;
   fillThumbs();
