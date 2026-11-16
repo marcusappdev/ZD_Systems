@@ -1543,63 +1543,98 @@ function mobileRoute(next, param) {
   if (next) { location.hash = "#/"; return; }
   mSearch();
 }
+/* small line icons (24px grid, drawn with currentColor) */
+const MI = {
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  back: '<path d="M15 18l-6-6 6-6"/>', chev: '<path d="M9 18l6-6-6-6"/>',
+  phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
+  pin: '<path d="M12 22s7-6.3 7-12a7 7 0 0 0-14 0c0 5.7 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/>',
+  cal: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>',
+  building: '<rect x="4" y="3" width="16" height="18" rx="1.5"/><path d="M9 7h1M14 7h1M9 11h1M14 11h1M9 15h1M14 15h1M10 21v-3h4v3"/>',
+  id: '<rect x="2" y="5" width="20" height="14" rx="2"/><circle cx="8" cy="12" r="2.5"/><path d="M13 10h5M13 14h3"/>',
+  target: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>',
+  face: '<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><circle cx="9" cy="10" r=".6"/><circle cx="15" cy="10" r=".6"/><path d="M9 15c1.7 1.3 4.3 1.3 6 0"/>',
+};
+const mi = (k, cls = "") => `<svg class="mi ${cls}" viewBox="0 0 24 24" aria-hidden="true">${MI[k]}</svg>`;
+const mTone = st => ({ Active: "ok", Expiring: "warn" })[st] || "bad";        // green / amber / red
+const mPill = st => `<span class="m-pill ${mTone(st)}">${esc(st)}</span>`;
+const mBack = (href, label) => `<a class="m-back" href="${href}">${mi("back")}<span>${esc(label)}</span></a>`;
 const mItemHolder = h => { const n = D.licences.filter(l => l.HolderRef === h.ClientRef).length;
   return `<a class="m-item" href="#/holder/${encodeURIComponent(h.ClientRef)}"><img data-photo="${esc(h.ClientRef)}" alt="">
-    <span><b>${esc(fullName(h))}</b><span class="small muted">${isCompany(h) ? "Company · " + esc(personName(h)) : "Born " + esc(fmtDate(h.DateOfBirth) || "—")}</span>
-    <span class="small">${n} licence${n === 1 ? "" : "s"}</span></span></a>`; };
+    <span class="m-item-body"><b>${esc(fullName(h))}</b><span class="m-sub">${isCompany(h) ? mi("building", "xs") + " Company" : mi("cal", "xs") + " Born " + esc(fmtDate(h.DateOfBirth) || "—")}</span>
+    <span class="m-sub">${mi("id", "xs")} ${n} licence${n === 1 ? "" : "s"}</span></span>${mi("chev", "m-chev")}</a>`; };
 const mItemLicence = l => { const h = holder(l.HolderRef) || {}, st = statusOf(l);
-  return `<a class="m-item" href="#/licence/${encodeURIComponent(l.ClientRef)}"><img data-photo="${esc(isLTC(l) ? l.ClientRef : h.ClientRef || "")}" alt="">
-    <span><b class="mono">${esc(l.Title)}</b> <span class="tag ${STATUS_TAG[st] || ""}">${st}</span>
-    <span class="small">${esc(isLTC(l) ? carrierName(l) + " · " + fullName(h) : fullName(h))}</span>
-    <span class="small muted">${esc(gunText(l))}</span></span></a>`; };
+  return `<a class="m-item m-edge ${mTone(st)}" href="#/licence/${encodeURIComponent(l.ClientRef)}"><img data-photo="${esc(isLTC(l) ? l.ClientRef : h.ClientRef || "")}" alt="">
+    <span class="m-item-body"><span class="m-row"><b class="mono">${esc(l.Title)}</b>${mPill(st)}</span>
+    <span class="m-name">${esc(isLTC(l) ? carrierName(l) : fullName(h))}</span>
+    <span class="m-sub">${esc([isLTC(l) ? fullName(h) : "", gunText(l)].filter(Boolean).join(" · "))}</span></span>${mi("chev", "m-chev")}</a>`; };
+
 function mSearch() {
-  $("#main").innerHTML = banners() + `<div class="m-search"><input type="search" id="mq" placeholder="Name, company, licence or serial no" autocomplete="off" value="${esc(S.mq || "")}">
-    <p class="small muted" style="margin:6px 2px 0">Look-up only - changes are made on a computer.</p></div><div id="mres"></div>`;
+  const t = today(), live = D.licences.filter(l => !["Cancelled"].includes(l.LicenceStatus || "Active"));
+  const exp = live.filter(l => statusOf(l) === "Expired").length;
+  $("#main").innerHTML = banners() + `<section class="m-hero">
+      <div class="m-kicker">Firearms licence look-up</div>
+      <h1>Who are you checking?</h1>
+      <label class="m-searchbox">${mi("search")}<input type="search" id="mq" placeholder="Name, company, licence or serial no" autocomplete="off" value="${esc(S.mq || "")}"></label>
+      <div class="m-stats"><span><b>${D.holders.length}</b> holders</span><span><b>${D.licences.length}</b> licences</span><span class="${exp ? "bad" : ""}"><b>${exp}</b> expired</span></div>
+    </section><div id="mres"></div>
+    <p class="m-foot">${mi("face", "xs")} Look-up only · changes are made on a computer</p>`;
   const run = () => {
     S.mq = $("#mq").value; const q = S.mq.trim().toLowerCase();
-    if (q.length < 2) { $("#mres").innerHTML = `<p class="muted" style="text-align:center;margin-top:30px">Type at least 2 letters or numbers.</p>`; return; }
+    if (q.length < 2) { $("#mres").innerHTML = `<div class="m-empty">${mi("search", "lg")}<p>Type at least 2 letters or numbers to search the register.</p></div>`; return; }
     const has = vals => vals.some(v => String(v || "").toLowerCase().includes(q));
     const hs = D.holders.filter(h => has([fullName(h), personName(h), h.CompanyRegNo, h.Phone])).sort((a, b) => sortName(a).localeCompare(sortName(b)));
     const ls = D.licences.filter(l => has([l.Title, l.SerialNo, l.Make, carrierName(l), l.CarrierPhone])).sort((a, b) => String(a.Title).localeCompare(String(b.Title)));
-    $("#mres").innerHTML = (hs.length ? `<h3 class="m-h">Licence holders (${hs.length})</h3>${hs.slice(0, 30).map(mItemHolder).join("")}` : "")
-      + (ls.length ? `<h3 class="m-h">Licences (${ls.length})</h3>${ls.slice(0, 30).map(mItemLicence).join("")}` : "")
-      || `<p class="muted" style="text-align:center;margin-top:30px">Nothing found for "${esc(S.mq.trim())}".</p>`;
+    $("#mres").innerHTML = (hs.length ? `<h3 class="m-h">Licence holders <span>${hs.length}</span></h3>${hs.slice(0, 30).map(mItemHolder).join("")}` : "")
+      + (ls.length ? `<h3 class="m-h">Licences <span>${ls.length}</span></h3>${ls.slice(0, 30).map(mItemLicence).join("")}` : "")
+      || `<div class="m-empty">${mi("search", "lg")}<p>Nothing found for “${esc(S.mq.trim())}”.</p></div>`;
     fillThumbs();
   };
   $("#mq").oninput = run; run();
 }
-const mRows = rows => `<dl class="m-dl">${rows.filter(r => r[1]).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("")}</dl>`;
-const codeText = (set, c) => c ? esc(c) + (codeName(set, c) && codeName(set, c) !== c ? ` <span class="muted">- ${esc(codeName(set, c))}</span>` : "") : "";
+const mInfo = rows => `<div class="m-info">${rows.filter(r => r[2]).map(([icon, label, v]) => `<div class="m-info-row">${mi(icon)}<div><span>${esc(label)}</span><b>${v}</b></div></div>`).join("")}</div>`;
+const mFacts = rows => `<dl class="m-facts">${rows.filter(r => r[1]).map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${v}</dd></div>`).join("")}</dl>`;
+const codeText = (set, c) => c ? `<span class="m-code">${esc(c)}</span>${codeName(set, c) && codeName(set, c) !== c ? " " + esc(codeName(set, c)) : ""}` : "";
+
 function mHolder(ref) {
   const h = holder(ref), co = isCompany(h);
   const ls = D.licences.filter(l => l.HolderRef === ref).sort((a, b) => (isLTC(a) - isLTC(b)) || String(a.Title).localeCompare(String(b.Title)));
-  $("#main").innerHTML = banners() + `<a class="btn sm" href="#/">← Search</a>
-    <div class="card m-head"><img class="m-photo" data-photo="${esc(ref)}" alt=""><div><h2>${esc(fullName(h))}</h2>
-      <div class="small muted">${co ? "Company" : "Licence holder"}</div><div style="margin-top:8px">${faceTag(h)}</div></div></div>
-    <div class="card">${mRows((co ? [["Owner / CEO", esc(personName(h) + (h.RepRole ? ", " + h.RepRole : ""))], ["IPA no", esc(h.CompanyRegNo || "")]]
-      : [["Born", esc(fmtDate(h.DateOfBirth))], ["Sex", esc(h.Sex || "")]]).concat([["Phone", h.Phone ? `<a href="tel:${esc(h.Phone)}">${esc(h.Phone)}</a>` : ""], ["Email", esc(h.Email || "")],
-      ["Address", h.Address ? `<span style="white-space:pre-line">${esc(h.Address)}</span>` : ""]]))}</div>
-    <h3 class="m-h">Licences (${ls.length})</h3>${ls.map(mItemLicence).join("") || `<p class="muted">No licences.</p>`}`;
+  const tel = h.Phone ? `<a href="tel:${esc(String(h.Phone).replace(/\s+/g, ""))}">${esc(h.Phone)}</a>` : "";
+  $("#main").innerHTML = banners() + mBack("#/", "Search") + `<section class="m-profile">
+      <img class="m-photo" data-photo="${esc(ref)}" alt="">
+      <div><span class="m-kind">${mi(co ? "building" : "user", "xs")} ${co ? "Company" : "Individual"}</span><h1>${esc(fullName(h))}</h1>
+        ${co ? `<div class="m-subline">${esc(personName(h))}${h.RepRole ? " · " + esc(h.RepRole) : ""}</div>` : ""}
+        <div class="m-face ${h.FaceStatus === "Enrolled" ? "ok" : ""}">${mi("face", "xs")} ${esc(h.FaceStatus === "Enrolled" ? "Face on file" : h.FaceStatus ? "Face: " + h.FaceStatus.toLowerCase() : "No face record")}</div></div></section>
+    ${mInfo([["cal", "Date of birth", !co && h.DateOfBirth ? esc(fmtDate(h.DateOfBirth)) + (h.Sex ? ` · ${esc(h.Sex)}` : "") : ""], ["id", "Registration (IPA) no", co ? esc(h.CompanyRegNo || "") : ""],
+      ["phone", "Phone", tel], ["mail", "Email", h.Email ? `<a href="mailto:${esc(h.Email)}">${esc(h.Email)}</a>` : ""], ["pin", "Address", h.Address ? `<span style="white-space:pre-line">${esc(h.Address)}</span>` : ""]])}
+    <h3 class="m-h">Licences <span>${ls.length}</span></h3>${ls.map(mItemLicence).join("") || `<div class="m-empty"><p>No licences.</p></div>`}`;
   fillThumbs();
 }
+
 function mLicence(ref) {
-  const l = lic(ref), h = holder(l.HolderRef) || {}, st = statusOf(l), ltc = isLTC(l), t = typeOf(l);
+  const l = lic(ref), h = holder(l.HolderRef) || {}, st = statusOf(l), ltc = isLTC(l), t = typeOf(l), tone = mTone(st);
   const gun = ltc ? lic(l.CarryForRef) || l : l;
-  $("#main").innerHTML = banners() + `<a class="btn sm" href="#/holder/${encodeURIComponent(h.ClientRef || "")}">← ${esc(fullName(h))}</a>
-    <div class="m-status ${STATUS_TAG[st] || ""}">${esc(st)}${st === "Expired" ? ` · ${daysBetween(String(l.ExpiryDate).slice(0, 10), today())} days ago` : ""}</div>
-    <div class="card m-head"><img class="m-photo" data-photo="${esc(ltc ? ref : h.ClientRef || "")}" alt=""><div>
-      <div class="small muted">${esc(LTYPES[t].label)}</div><h2 class="mono">${esc(l.Title)}</h2>
-      <div><b>${esc(ltc ? carrierName(l) : t === "Company" ? personName(h) : fullName(h))}</b></div>
-      <div class="small">${ltc || t === "Company" ? esc(fullName(h)) : ""}</div>
-      ${ltc ? `<div style="margin-top:8px">${faceTag(l)}</div>` : ""}</div></div>
-    ${ltc ? `<div class="card"><h3 class="m-h" style="margin-top:0">Person licensed to carry</h3>${mRows([["Born", esc(fmtDate(l.CarrierDOB))], ["Sex", esc(l.CarrierSex || "")],
-      ["Phone", l.CarrierPhone ? `<a href="tel:${esc(l.CarrierPhone)}">${esc(l.CarrierPhone)}</a>` : ""], ["Address", l.CarrierAddress ? `<span style="white-space:pre-line">${esc(l.CarrierAddress)}</span>` : ""]])}</div>` : ""}
-    <div class="card"><h3 class="m-h" style="margin-top:0">Firearm</h3>${mRows([["Serial no", `<b class="mono">${esc(gun.SerialNo || "")}</b>`], ["Make", esc(gun.Make || "")], ["Model", esc(gun.Model || "")],
+  const who = ltc ? carrierName(l) : t === "Company" ? personName(h) : fullName(h);
+  const ago = st === "Expired" ? daysBetween(String(l.ExpiryDate).slice(0, 10), today()) : st === "Expiring" ? daysBetween(today(), String(l.ExpiryDate).slice(0, 10)) : null;
+  $("#main").innerHTML = banners() + mBack(`#/holder/${encodeURIComponent(h.ClientRef || "")}`, fullName(h)) + `
+    <section class="m-card ${tone}">
+      <div class="m-card-top"><span>${esc(LTYPES[t].label)}</span><span class="m-card-status">${esc(st)}${ago !== null ? ` · ${ago} day${ago === 1 ? "" : "s"} ${st === "Expired" ? "ago" : "left"}` : ""}</span></div>
+      <div class="m-card-main"><img class="m-card-photo" data-photo="${esc(ltc ? ref : h.ClientRef || "")}" alt="">
+        <div><div class="m-card-label">Licence no</div><div class="m-card-no">${esc(l.Title)}</div>
+          <div class="m-card-name">${esc(who)}</div>${ltc || t === "Company" ? `<div class="m-card-co">${esc(fullName(h))}</div>` : ""}</div></div>
+      <div class="m-card-foot"><div><span>Serial no</span><b>${esc(gun.SerialNo || "—")}</b></div><div><span>Purpose</span><b>${esc(l.Purpose || "—")}</b></div><div><span>Expires</span><b>${esc(fmtDate(l.ExpiryDate) || "—")}</b></div></div>
+    </section>
+    ${ltc ? `<h3 class="m-h">Person licensed to carry</h3>${mInfo([["cal", "Date of birth", l.CarrierDOB ? esc(fmtDate(l.CarrierDOB)) + (l.CarrierSex ? ` · ${esc(l.CarrierSex)}` : "") : ""],
+      ["phone", "Phone", l.CarrierPhone ? `<a href="tel:${esc(String(l.CarrierPhone).replace(/\s+/g, ""))}">${esc(l.CarrierPhone)}</a>` : ""], ["pin", "Address", l.CarrierAddress ? `<span style="white-space:pre-line">${esc(l.CarrierAddress)}</span>` : ""],
+      ["face", "Face record", esc(l.FaceStatus === "Enrolled" ? "On file" : l.FaceStatus || "None")]])}` : ""}
+    <h3 class="m-h">Firearm</h3>${mFacts([["Serial no", `<span class="mono">${esc(gun.SerialNo || "")}</span>`], ["Make", esc(gun.Make || "")], ["Model", esc(gun.Model || "")],
       ["Type", codeText("Type", gun.FirearmType)], ["Calibre", esc(gun.Calibre || "")], ["Class", codeText("Class", gun.Class)],
-      ["Company licence", ltc && lic(l.CarryForRef) ? `<a href="#/licence/${encodeURIComponent(l.CarryForRef)}" class="mono">${esc(lic(l.CarryForRef).Title)}</a>` : ""]])}</div>
-    <div class="card"><h3 class="m-h" style="margin-top:0">Licence</h3>${mRows([["Purpose", codeText("Purpose", l.Purpose)], ["Issued", esc(fmtDate(l.IssueDate))], ["Expires", `<b>${esc(fmtDate(l.ExpiryDate))}</b>`],
-      ["Status", `<span class="tag ${STATUS_TAG[st] || ""}">${esc(st)}</span>`], ["Card printed", esc(l.LastPrinted ? fmtDate(l.LastPrinted) : "Not yet")]])}</div>
-    ${t === "Company" && ltcsOf(l).length ? `<h3 class="m-h">Licences to carry this firearm</h3>${ltcsOf(l).map(mItemLicence).join("")}` : ""}`;
+      ["Company licence", ltc && lic(l.CarryForRef) ? `<a href="#/licence/${encodeURIComponent(l.CarryForRef)}" class="mono">${esc(lic(l.CarryForRef).Title)}</a>` : ""]])}
+    <h3 class="m-h">Licence</h3>${mFacts([["Purpose", codeText("Purpose", l.Purpose)], ["Issued", esc(fmtDate(l.IssueDate))], ["Expires", esc(fmtDate(l.ExpiryDate))],
+      ["Status", mPill(st)], ["Card printed", esc(l.LastPrinted ? fmtDate(l.LastPrinted) : "Not yet")]])}
+    ${t === "Company" && ltcsOf(l).length ? `<h3 class="m-h">Licences to carry this firearm <span>${ltcsOf(l).length}</span></h3>${ltcsOf(l).map(mItemLicence).join("")}` : ""}`;
   fillThumbs();
 }
 
