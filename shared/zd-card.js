@@ -111,7 +111,7 @@
         { key: "Make",        x: 396, y: 482, max: 268 },             // under "Make"
         { key: "FirearmType", x: 674, y: 482, max: 268 },             // under "Type"
         { key: "SerialNo",    x: 82,  y: 504, max: 300, size: 36 },   // after "SN" - large
-        { key: "Registrar",   x: 156, y: 553, max: 220, size: 22 },   // after "Registrar"
+        { key: "Registrar",   x: 156, y: 553, max: 220, size: 22, sigH: 50, sigDrop: 12 },   // after "Registrar"
         { key: "Calibre",     x: 396, y: 564, max: 190, size: 24 },   // under "Calibre"
         { key: "Purpose",     x: 600, y: 566, max: 175, size: 36 },   // under "Purpose" - the code letter, large
         { key: "ExpiryDate",  x: 779, y: 564, max: 170, size: 24, dateSep: "-" }    // under "Expiry Date", 18-04-2027 as on the current cards
@@ -136,12 +136,15 @@
       { key: "Make",        x: 481, y: 446, max: 290, upper: true },                  // under "Make"
       { key: "FirearmType", x: 782, y: 446, max: 140, upper: true },                  // under "Type"
       { key: "SerialNo",    x: 124, y: 489, max: 320, size: 36 },                     // after "SN", large
-      { key: "Registrar",   x: 172, y: 526, max: 260, size: 24 },                     // after "Registrar"
+      { key: "Registrar",   x: 172, y: 526, max: 260, size: 24, sigH: 52, sigDrop: 24 },                     // after "Registrar"
       { key: "Calibre",     x: 478, y: 543, max: 150, upper: true },                  // under "Calibre"
       { key: "Purpose",     x: 681, y: 543, max: 110, align: "center", size: 30 },    // under "Purpose" - the code letter
       { key: "ExpiryDate",  x: 780, y: 543, max: 138, dateSep: "-" }                  // under "Expiry Date", 30-06-2027
     ]
   };
+  // Not a card: the Registrar's signature, kept in the backgrounds library and drawn after
+  // "Registrar" on the layouts that have that field (hologram and legacy front)
+  LAYOUTS["Registrar signature"] = { isSignature: true, fields: [] };
   LAYOUTS["PNG Firearm Licence (legacy) - back"] = {
     orientation: "Landscape", isBack: true, photo: null, fields: [],
     // Code 128 barcode running down the right-hand edge, as on the old cards
@@ -191,7 +194,7 @@
     return out;
   }
 
-  function drawTemplate(ctx, T, lic, photo, light) {
+  function drawTemplate(ctx, T, lic, photo, light, sig) {
     const P = T.photo, FONT = T.font || FONT_UI, W8 = T.weight || 700;
     if (photo && P) {
       ctx.save(); roundRect(ctx, P.x, P.y, P.w, P.h, P.radius ?? 8); ctx.clip();
@@ -202,6 +205,7 @@
     }
     ctx.fillStyle = light ? "#ffffff" : "#111418";
     for (const f of T.fields) {
+      if (f.key === "Registrar" && sig) { drawSignature(ctx, f, sig); continue; }   // the signature takes the place of a typed name
       let v = String(lic[f.key] ?? "").trim();
       if (!v) continue;
       if (isDate(f.key)) v = f.dateSep ? dmy(v).replace(/\//g, f.dateSep) : dmy(v);
@@ -225,6 +229,15 @@
     }
     ctx.textAlign = "left";
     if (T.barcode) drawBarcode(ctx, T.barcode, String(lic[T.barcode.key] ?? "").trim());
+  }
+
+  // The signature sits on the line after "Registrar": its foot just below the text baseline
+  function drawSignature(ctx, f, sig) {
+    const iw = sig.naturalWidth || sig.width, ih = sig.naturalHeight || sig.height;
+    if (!iw || !ih) return;
+    let h = f.sigH || Math.round((f.size || 24) * 2.9), w = h * iw / ih;
+    if (w > f.max) { w = f.max; h = w * ih / iw; }
+    ctx.drawImage(sig, f.x, f.y + (f.sigDrop ?? 10) - h, w, h);   // sigH / sigDrop keep it clear of the SN above
   }
 
   function roundRect(ctx, x, y, w, h, r) {
@@ -260,7 +273,7 @@
     }
 
     const light = bg.textColour === "Light";
-    if (T) { drawTemplate(ctx, T, lic, photo, light); return canvas; }
+    if (T) { drawTemplate(ctx, T, lic, photo, light, bg.signature); return canvas; }
     const ink = light ? "#ffffff" : "#111418", soft = light ? "rgba(255,255,255,.82)" : "#4a5260";
     if (light) { ctx.shadowColor = "rgba(0,0,0,.55)"; ctx.shadowBlur = 4; ctx.shadowOffsetY = 1; }
     ctx.textBaseline = "alphabetic";

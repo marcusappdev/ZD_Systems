@@ -776,7 +776,7 @@ async function pageLicence() {
   const ro = !canEdit(), dis = ro ? "disabled" : "";
   const opt = (arr, v) => [...new Set([...(arr || []), ...(v ? [v] : [])])].map(o => `<option ${o === v ? "selected" : ""}>${esc(o)}</option>`).join("");
   // back-of-card artwork is never offered on its own; it goes with its front
-  const actBg = D.backgrounds.filter(b => b.Active !== "No" && b.Active !== false && !ZDCard.LAYOUTS[b.Layout]?.isBack);
+  const actBg = D.backgrounds.filter(b => b.Active !== "No" && b.Active !== false && !ZDCard.LAYOUTS[b.Layout]?.isBack && !ZDCard.LAYOUTS[b.Layout]?.isSignature);
   if (!S.card || S.card.ref !== ref) {
     const saved = D.backgrounds.find(b => b.name === l.CardBackground);
     S.card = saved ? { ref, bg: saved.fileId, orientation: saved.Orientation || "Landscape" }
@@ -1074,12 +1074,15 @@ function purposePicker(cur, dis) {
     ${list.map(([c, n]) => `<label class="chk"><input type="checkbox" name="PurposeCode" value="${esc(c)}" ${sel.includes(String(c).toUpperCase()) ? "checked" : ""}> <b class="mono">${esc(c)}</b> ${esc(n)}</label>`).join("")}
     ${extra.map(c => `<label class="chk"><input type="checkbox" name="PurposeCode" value="${esc(c)}" checked> <b class="mono">${esc(c)}</b> <span class="muted">(no longer in the list)</span></label>`).join("")}</fieldset>`;
 }
+/* The Registrar's signature: a picture in the backgrounds library with Layout "Registrar signature" */
+const sigMeta = () => D.backgrounds.find(b => ZDCard.LAYOUTS[b.Layout]?.isSignature && b.Active !== "No" && b.Active !== false);
 /* Background settings from its library columns */
 async function bgFor(b, orientation = "Landscape") {
   if (!b) return { image: null, orientation, textColour: "Dark", showHeader: true };
   return { image: await bgImage(b), orientation: b.Orientation || "Landscape", textColour: b.TextColour || "Dark",
     showHeader: b.ShowHeader !== "No" && b.ShowHeader !== false, panel: b.TextPanel === "Yes",
-    layout: b.Layout && b.Layout !== "Standard" ? b.Layout : "", preprinted: b.Preprinted === "Yes" };
+    layout: b.Layout && b.Layout !== "Standard" ? b.Layout : "", preprinted: b.Preprinted === "Yes",
+    signature: await bgImage(sigMeta()) };
 }
 /* Holder + licence -> the field names the card layouts use */
 function cardData(h, l) {
@@ -1223,6 +1226,7 @@ async function pageBackgrounds() {
   $("#main").innerHTML = banners() + `<div class="bar"><h2>Card backgrounds</h2><span class="grow"></span>
       <label class="btn primary" style="margin:0">+ Add background<input type="file" id="bgFile" accept="image/png,image/jpeg" hidden></label></div>
     <div class="banner info">Best size: <b>${card.Landscape.w} × ${card.Landscape.h} pixels</b> (landscape) or <b>${card.Portrait.w} × ${card.Portrait.h}</b> (upright) - the card at 300 dpi. Any other size still fills the whole card: the picture is enlarged until it covers the card and the overflow is trimmed evenly. The previews below show exactly what prints.</div>
+    <div class="banner info"><b>Registrar's signature:</b> add the signature picture here (a PNG with a see-through background is best) and set its <b>Field layout</b> to <b>Registrar signature</b>. It is printed after "Registrar" on the PNG Firearm Licence cards. Set Active to No to stop printing it.</div>
     <div class="grid2" id="bgList">${D.backgrounds.length ? "" : `<div class="card empty">No backgrounds yet. Cards can still be printed with no background.</div>`}</div>`;
   const list = $("#bgList");
   for (const b of D.backgrounds) {
@@ -1233,6 +1237,14 @@ async function pageBackgrounds() {
       <p class="small muted" data-info style="margin:8px 0 0">${esc(b.name)}</p>`;
     list.appendChild(div);
     div.querySelector("[data-edit]").onclick = () => bgDialog(b);
+    if (ZDCard.LAYOUTS[b.Layout]?.isSignature) {        // not a card - show the signature itself
+      const img = await bgImage(b), cv = div.querySelector("canvas");
+      cv.className = "sigview"; cv.width = 600; cv.height = 220;
+      const x = cv.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, 600, 220);
+      if (img) { const k = Math.min(560 / img.naturalWidth, 180 / img.naturalHeight); x.drawImage(img, (600 - img.naturalWidth * k) / 2, (220 - img.naturalHeight * k) / 2, img.naturalWidth * k, img.naturalHeight * k); }
+      div.querySelector("[data-info]").innerHTML = `${esc(b.name)} · printed after "Registrar" on the PNG Firearm Licence cards${b.Active === "No" ? " (switched off)" : ""}`;
+      continue;
+    }
     const bgs = await bgFor(b), img = bgs.image;
     ZDCard.drawCard(div.querySelector("canvas"), cardData(SAMPLE_HOLDER, SAMPLE_LIC), null, bgs, BRAND);
     if (img) div.querySelector("[data-info]").innerHTML = `${esc(b.name)} · ${img.naturalWidth} × ${img.naturalHeight} px · ${esc(trimNote(img.naturalWidth, img.naturalHeight, b.Orientation))}`;

@@ -220,3 +220,4 @@ body.mobile .banner{margin:12px 14px 0;border-radius:12px}
 fieldset.purposes{border:1px solid var(--line);border-radius:10px;padding:8px 14px 10px;margin:0 0 14px;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:2px 14px}
 fieldset.purposes legend{font-weight:600;font-size:13px;padding:0 6px}
 fieldset.purposes .chk{margin:4px 0;font-size:14px}
+canvas.sigview{width:100%;max-width:300px;height:auto;border:1px solid var(--line);border-radius:8px;display:block}
