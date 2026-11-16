@@ -114,7 +114,7 @@
         { key: "Registrar",   x: 156, y: 553, max: 220, size: 22 },   // after "Registrar"
         { key: "Calibre",     x: 396, y: 564, max: 190, size: 24 },   // under "Calibre"
         { key: "Purpose",     x: 600, y: 566, max: 175, size: 36 },   // under "Purpose" - the code letter, large
-        { key: "ExpiryDate",  x: 779, y: 564, max: 170, size: 24 }    // under "Expiry Date"
+        { key: "ExpiryDate",  x: 779, y: 564, max: 170, size: 24, dateSep: "-" }    // under "Expiry Date", 18-04-2027 as on the current cards
       ]
     }
   };
