@@ -94,6 +94,8 @@ foreach ($c in "Surname","GivenNames","MiddleName","DateOfBirth","Sex","Phone","
                "FaceId","FaceStatus","FaceDate","CapturedBy") { Ensure-Field $H $c "Text" }
 # Company holders: the company's details (the person fields hold its owner / CEO)
 foreach ($c in "HolderKind","CompanyName","CompanyRegNo","RepRole") { Ensure-Field $H $c "Text" }
+# The holder's licence number - every one of their licences shows it (357, C677, LTC677)
+Ensure-Field $H "LicenceNo" "Text" -Indexed
 foreach ($c in "Address","Notes","PhotoUrl","FaceNote") { Ensure-Field $H $c "Note" }
 Ensure-Field $H "ClientRef" "Text" -Indexed
 
