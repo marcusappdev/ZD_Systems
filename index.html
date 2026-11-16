@@ -815,7 +815,7 @@ async function pageLicence() {
           <div class="grid3"><label>Surname *<input type="text" name="CarrierSurname" value="${esc(l.CarrierSurname)}" ${dis}></label>
             <label>First name *<input type="text" name="CarrierGivenNames" value="${esc(l.CarrierGivenNames)}" ${dis}></label>
             <label>Middle name<input type="text" name="CarrierMiddleName" value="${esc(l.CarrierMiddleName)}" ${dis}></label></div>
-          <div class="grid3"><label>Date of birth *<input type="date" name="CarrierDOB" value="${esc(String(l.CarrierDOB || "").slice(0, 10))}" ${dis}></label>
+          <div class="grid3"><label>Date of birth<input type="date" name="CarrierDOB" value="${esc(String(l.CarrierDOB || "").slice(0, 10))}" ${dis}></label>
             <label>Sex<select name="CarrierSex" ${dis}>${["", "M", "F", "X"].map(o => `<option ${o === (l.CarrierSex || "") ? "selected" : ""}>${o}</option>`).join("")}</select></label>
             <label>Phone<input type="text" name="CarrierPhone" value="${esc(l.CarrierPhone)}" ${dis}></label></div>
           <label>Address (printed on the card, under the company name)<textarea name="CarrierAddress" ${dis}>${esc(l.CarrierAddress)}</textarea></label>
@@ -973,7 +973,7 @@ async function pageLicence() {
   const saveBtn = $("#saveBtn");
   if (saveBtn) saveBtn.onclick = async () => {
     const f = val();
-    const need = ltc ? [["Title", "Licence no"], ["CarrierSurname", "Surname"], ["CarrierGivenNames", "First name"], ["CarrierDOB", "Date of birth"], ["CarryForRef", "Company firearm"], ["Purpose", "Purpose"], ["IssueDate", "Issued"], ["ExpiryDate", "Expires"]]
+    const need = ltc ? [["Title", "Licence no"], ["CarrierSurname", "Surname"], ["CarrierGivenNames", "First name"], ["CarryForRef", "Company firearm"], ["Purpose", "Purpose"], ["IssueDate", "Issued"], ["ExpiryDate", "Expires"]]
       : [["Title", "Licence no"], ["Class", "Class"], ["Purpose", "Purpose"], ["IssueDate", "Issued"], ["ExpiryDate", "Expires"], ["SerialNo", "Serial no"]];
     const missing = need.filter(([k]) => !f[k]).map(x => x[1]);
     if (missing.length) return toast("Please fill in: " + missing.join(", "));
