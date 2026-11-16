@@ -592,7 +592,7 @@ async function pageHolder() {
           <div class="grid3"><label>Surname *<input type="text" name="Surname" value="${esc(h.Surname)}" ${dis}></label>
             <label>First name *<input type="text" name="GivenNames" value="${esc(h.GivenNames)}" ${dis}></label>
             <label>Middle name<input type="text" name="MiddleName" value="${esc(h.MiddleName)}" ${dis}></label></div>
-          <div class="grid3"><label>Date of birth <span class="ind-only">*</span><input type="date" name="DateOfBirth" value="${esc(String(h.DateOfBirth || "").slice(0, 10))}" ${dis}></label>
+          <div class="grid3"><label>Date of birth<input type="date" name="DateOfBirth" value="${esc(String(h.DateOfBirth || "").slice(0, 10))}" ${dis}></label>
             <label>Sex<select name="Sex" ${dis}>${["", "M", "F", "X"].map(o => `<option ${o === (h.Sex || "") ? "selected" : ""}>${o}</option>`).join("")}</select></label>
             <label class="co-only">Role<input type="text" name="RepRole" list="repRoles" value="${esc(h.RepRole)}" placeholder="e.g. Owner, CEO" ${dis}><datalist id="repRoles">${(CHOICES.REP_ROLES || []).map(r => `<option value="${esc(r)}">`).join("")}</datalist></label>
             <label class="ind-only">Phone<input type="text" name="Phone" value="${esc(h.Phone)}" ${dis}></label></div>
@@ -680,14 +680,14 @@ async function pageHolder() {
     const f = val();
     const comp = f.HolderKind === "Company";
     const need = comp ? [["CompanyName", "Company name"], ["Surname", "Owner / CEO surname"], ["GivenNames", "Owner / CEO first name"]]
-      : [["Surname", "Surname"], ["GivenNames", "First name"], ["DateOfBirth", "Date of birth"]];
+      : [["Surname", "Surname"], ["GivenNames", "First name"]];   // date of birth is optional
     const missing = need.filter(([k]) => !f[k]).map(x => x[1]);
     if (missing.length) return toast("Please fill in: " + missing.join(", "));
     const twin = comp
       ? D.holders.find(x => x.ClientRef !== ref && isCompany(x) && (norm(x.CompanyName) === norm(f.CompanyName) || (f.CompanyRegNo && norm(x.CompanyRegNo) === norm(f.CompanyRegNo))))
       : D.holders.find(x => x.ClientRef !== ref && !isCompany(x) && norm(x.Surname) === norm(f.Surname) && norm(firstNames(x)) === norm(firstNames(f)) && String(x.DateOfBirth || "").slice(0, 10) === f.DateOfBirth);
     if (twin && await ask(comp ? `${fullName(twin)}${twin.CompanyRegNo ? " (IPA " + twin.CompanyRegNo + ")" : ""} is already a licence holder.\n\nOpen that company rather than creating a second record?`
-        : `${fullName(twin)}, born ${fmtDate(twin.DateOfBirth)}, is already a licence holder.\n\nOpen that person to add another firearm, rather than creating a second record?`,
+        : `${fullName(twin)}${twin.DateOfBirth ? ", born " + fmtDate(twin.DateOfBirth) + "," : ""} is already a licence holder.\n\nOpen that person to add another firearm, rather than creating a second record?`,
         { title: "Already a holder", yes: comp ? "Open that company" : "Open that person", no: "Save as a new holder" })) {
       S.dirty = false; location.hash = "#/holder/" + encodeURIComponent(twin.ClientRef); return; }
     if (isNew) f.CapturedBy = me();
