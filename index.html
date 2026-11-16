@@ -110,6 +110,8 @@ const norm = s => String(s || "").trim().toUpperCase();
   $("#hdr").hidden = false;
   window.addEventListener("hashchange", () => route());   // not route(event): the event would count as "quiet" and skip the unsaved-changes question
   await convertOldRecords();
+  // the mobile view always opens on an empty search, whatever page the address (or a bookmark) pointed at
+  if (S.mobile) { history.replaceState(null, "", location.pathname + location.search + "#/"); S.mq = ""; }
   route();
   flushSoon(800);
 })();
