@@ -1426,27 +1426,34 @@ async function activityBetween(from, to) {
 }
 function repActivity() {
   S.repFrom = S.repFrom || today(); S.repTo = S.repTo || today();
-  $("#rep").innerHTML = `<div class="card noprint"><div class="bar" style="flex-wrap:wrap;gap:10px">
+  $("#rep").innerHTML = `<div class="card noprint"><div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">
       <label style="margin:0">From<input type="date" id="rFrom" value="${S.repFrom}"></label>
       <label style="margin:0">To<input type="date" id="rTo" value="${S.repTo}"></label>
       <span style="align-self:flex-end">${[["Today", 0], ["Last 7 days", 6], ["Last 30 days", 29]].map(([t, n]) => `<button class="btn sm" type="button" data-days="${n}">${t}</button>`).join(" ")}</span>
+      <label style="margin:0;min-width:190px">Action<select id="rAct"><option value="">All actions</option></select></label>
       <label style="margin:0;flex:1;min-width:200px">Filter<input type="search" id="rQ" placeholder="Action, name, licence no, staff…" value="${esc(S.repQ || "")}"></label></div></div>
     <div class="card" id="repBody"><p class="muted">Loading…</p></div>`;
   let rows = [];
   const show = () => {
     const q = String($("#rQ").value || "").toLowerCase(); S.repQ = $("#rQ").value;
+    // the Action list holds the actions recorded in the chosen dates (the choice is kept if it has none)
+    const acts = [...new Set(rows.map(r => String(r.Title || "")).filter(Boolean))].sort();
+    const act = S.repAct || "";
+    $("#rAct").innerHTML = `<option value="">All actions (${rows.length})</option>` + [...new Set([...acts, ...(act ? [act] : [])])].sort()
+      .map(a => `<option ${a === act ? "selected" : ""} value="${esc(a)}">${esc(a)} (${rows.filter(r => r.Title === a).length})</option>`).join("");
     const list = rows.map(r => ({ ...r, who: r.HolderRef ? fullName(holder(r.HolderRef) || {}) : "" }))
+      .filter(r => !act || r.Title === act)
       .filter(r => !q || [r.Title, r.who, r.LicenceNo, r.ActivityBy, r.Details].some(v => String(v || "").toLowerCase().includes(q)))
       .sort((a, b) => String(b.ActivityAt).localeCompare(String(a.ActivityAt)));
     const range = S.repFrom === S.repTo ? fmtDate(S.repFrom) : `${fmtDate(S.repFrom)} to ${fmtDate(S.repTo)}`;
-    $("#repBody").innerHTML = repHead("Activity log", `${esc(range)} · ${list.length} entr${list.length === 1 ? "y" : "ies"}${q ? ` matching "${esc(q)}"` : ""}`)
+    $("#repBody").innerHTML = repHead("Activity log", `${esc(range)} · ${act ? esc(act) + " · " : ""}${list.length} entr${list.length === 1 ? "y" : "ies"}${q ? ` matching "${esc(q)}"` : ""}`)
       + (list.length ? `<table><thead><tr><th>When</th><th>Action</th><th>Holder</th><th>Licence</th><th>By</th><th>Details</th></tr></thead><tbody>
         ${list.map(r => `<tr><td class="nowrap mono small">${esc(whenText(r.ActivityAt))}</td><td><b>${esc(r.Title)}</b></td>
           <td>${r.HolderRef && holder(r.HolderRef) ? `<a href="#/holder/${encodeURIComponent(r.HolderRef)}">${esc(r.who)}</a>` : ""}</td>
           <td class="mono">${r.LicenceRef && lic(r.LicenceRef) ? `<a href="#/licence/${encodeURIComponent(r.LicenceRef)}">${esc(r.LicenceNo)}</a>` : esc(r.LicenceNo || "")}</td>
           <td class="small">${esc(r.ActivityBy)}</td><td class="small muted">${esc(r.Details || "")}</td></tr>`).join("")}</tbody></table>`
         : `<p class="muted">Nothing recorded${q ? " matching the filter" : ""} in this period.</p>`);
-    wireRepButtons(() => downloadCsv(`ZD Activity ${S.repFrom}${S.repTo !== S.repFrom ? " to " + S.repTo : ""}.csv`, ["When", "Action", "Holder", "Licence no", "By", "Details"],
+    wireRepButtons(() => downloadCsv(`ZD Activity ${S.repFrom}${S.repTo !== S.repFrom ? " to " + S.repTo : ""}${act ? " - " + safeName(act) : ""}.csv`, ["When", "Action", "Holder", "Licence no", "By", "Details"],
       list.map(r => [String(r.ActivityAt || ""), r.Title, r.who, r.LicenceNo, r.ActivityBy, r.Details])));
   };
   const load = async () => {
@@ -1457,6 +1464,7 @@ function repActivity() {
     catch (e) { $("#repBody").innerHTML = `<p style="color:var(--bad)">${isNetErr(e) ? "The activity log needs an internet connection." : "The activity log couldn't be loaded: " + esc(e.message)}</p>`; }
   };
   $("#rFrom").onchange = load; $("#rTo").onchange = load; $("#rQ").oninput = () => rows.length && show();
+  $("#rAct").onchange = () => { S.repAct = $("#rAct").value; show(); };
   $$("[data-days]").forEach(b => b.onclick = () => { $("#rTo").value = today(); $("#rFrom").value = addDays(today(), -Number(b.dataset.days)); load(); });
   load();
 }
