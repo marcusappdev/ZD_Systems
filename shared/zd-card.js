@@ -107,6 +107,7 @@
         { key: "LicenceNo",   x: 452, y: 150, max: 325, size: 48 },   // after "Lic No:", left of the hologram - large
         { key: "GivenNames",  x: 396, y: 258, max: 236 },             // under "First Name"
         { key: "Surname",     x: 642, y: 258, max: 300, upper: true },// under "Last Name"
+        { key: "CompanyLine", x: 396, y: 293, max: 545, size: 24 },   // company firearm (C...): the company, just below the names
         { key: "Address",     x: 396, y: 368, max: 545, size: 24, lines: 2, lineHeight: 30 },
         { key: "Make",        x: 396, y: 482, max: 268 },             // under "Make"
         { key: "FirearmType", x: 674, y: 482, max: 268 },             // under "Type"
@@ -130,8 +131,9 @@
     size: 28,
     fields: [
       { key: "LicenceNo",   x: 563, y: 133, max: 300, size: 46 },                     // after "No:", large
-      { key: "GivenNames",  x: 481, y: 250, max: 205, upper: true },                  // under "First Name"
-      { key: "Surname",     x: 694, y: 250, max: 225, upper: true },                  // under "Last Name"
+      { key: "GivenNames",  x: 481, y: 250, max: 205, upper: true, hideIf: "CompanyLine" },   // under "First Name"
+      { key: "Surname",     x: 694, y: 250, max: 225, upper: true, hideIf: "CompanyLine" },   // under "Last Name"
+      { key: "CompanyLine", x: 481, y: 250, max: 438, upper: true },                  // company firearm (C...): the company in place of the names
       { key: "Address",     x: 595, y: 298, max: 320, size: 26, lines: 3, lineHeight: 34, keepLines: true, upper: true },
       { key: "Make",        x: 481, y: 446, max: 290, upper: true },                  // under "Make"
       { key: "FirearmType", x: 782, y: 446, max: 140, upper: true },                  // under "Type"
@@ -206,6 +208,7 @@
     ctx.fillStyle = light ? "#ffffff" : "#111418";
     for (const f of T.fields) {
       if (f.key === "Registrar" && sig) { drawSignature(ctx, f, sig); continue; }   // the signature takes the place of a typed name
+      if (f.hideIf && String(lic[f.hideIf] ?? "").trim()) continue;                  // e.g. the names give way to the company
       let v = String(lic[f.key] ?? "").trim();
       if (!v) continue;
       if (isDate(f.key)) v = f.dateSep ? dmy(v).replace(/\//g, f.dateSep) : dmy(v);
