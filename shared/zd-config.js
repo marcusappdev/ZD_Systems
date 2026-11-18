@@ -99,5 +99,5 @@ const ZD_CHOICES = {
 const ZD_RULES = {
   FACE_RECHECK_HOURS:  12,
   OFFLINE_GRACE_HOURS: 12,
-  LICENCE_YEARS:       3
+  LICENCE_YEARS:       1
 };
