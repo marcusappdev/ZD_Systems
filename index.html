@@ -94,6 +94,16 @@ const ltcsOf = l => D.licences.filter(x => isLTC(x) && x.CarryForRef === l.Clien
 const refName = r => { const h = holder(r); if (h) return fullName(h); const l = D.licences.find(x => x.ClientRef === r);
   return l && isLTC(l) ? `${carrierName(l)} (LTC carrier, ${l.Title})` : r; };
 const norm = s => String(s || "").trim().toUpperCase();
+/* Firearm serial numbers must be unique. Compared without spaces, dashes, dots or slashes,
+   so "K805021" and "k 805-021" are the same firearm. A licence to carry shares its company
+   firearm's serial and is never counted. */
+const serialKey = s => String(s || "").toUpperCase().replace(/[\s\-./]+/g, "");
+function serialClash(serial, ref) {
+  const k = serialKey(serial); if (!k) return {};
+  const same = D.licences.filter(x => x.ClientRef !== ref && !isLTC(x) && serialKey(x.SerialNo) === k);
+  return { live: same.find(x => x.LicenceStatus !== "Cancelled"), cancelled: same.find(x => x.LicenceStatus === "Cancelled") };
+}
+const clashText = x => `licence ${x.Title || "(no number)"} - ${fullName(holder(x.HolderRef) || {})}${x.Make || x.FirearmType ? " (" + [x.Make, x.FirearmType].filter(Boolean).join(" ") + ")" : ""}`;
 
 /* ---------------- start ---------------- */
 (async function start() {
@@ -832,7 +842,7 @@ async function pageLicence() {
           <label>Notes (not printed)<textarea name="Notes" ${dis}>${esc(l.Notes)}</textarea></label>`
         : `<h3>Licence &amp; firearm</h3>
           <div class="grid3"><label>Licence no (from the ${isCompany(h) ? "company" : "holder"})<input type="text" value="${esc(theNo)}" class="mono" disabled title="Change it on the holder - all of their licences follow"></label>
-            <label>Serial no (SN) *<input type="text" name="SerialNo" value="${esc(l.SerialNo)}" class="mono" ${dis}></label>
+            <label>Serial no (SN) *<input type="text" name="SerialNo" value="${esc(l.SerialNo)}" class="mono" ${dis}><span class="field-warn" id="snWarn" hidden></span></label>
             <span></span></div>
           ${purposePicker(l.Purpose, dis)}
           <div class="grid3"><label>Make<input type="text" name="Make" value="${esc(l.Make)}" ${dis}></label>
@@ -874,6 +884,15 @@ async function pageLicence() {
     f.Title = theNo; f.LicenceType = type;
     return f;
   };
+  const snEl = form.elements.SerialNo;
+  const checkSerial = () => {
+    const w = $("#snWarn"); if (!w || !snEl) return;
+    const c = serialClash(snEl.value, ref), x = c.live || c.cancelled;
+    w.hidden = !x; snEl.classList.toggle("bad", !!c.live);
+    if (x) w.innerHTML = c.live ? `⚠ Already exists: <a href="#/licence/${encodeURIComponent(x.ClientRef)}">${esc(clashText(x))}</a>` : `On a cancelled licence: ${esc(clashText(x))}`;
+    w.classList.toggle("soft", !c.live);
+  };
+  if (snEl) { snEl.addEventListener("input", checkSerial); checkSerial(); }
   const issueEl = form.elements.IssueDate, expEl = form.elements.ExpiryDate;
   if (issueEl) issueEl.onchange = () => { if (isNew && issueEl.value) { expEl.value = addYears(issueEl.value, RULES.LICENCE_YEARS); schedulePreview(); } };
   if (!ltc) photoUrl(h).then(u => { if (u) $("#photoSlot").innerHTML = `<img src="${u}" alt="Licence holder">`; });
@@ -986,8 +1005,16 @@ async function pageLicence() {
       const g = lic(f.CarryForRef);
       Object.assign(f, { SerialNo: g.SerialNo || "", Make: g.Make || "", Model: g.Model || "", FirearmType: g.FirearmType || "", Calibre: g.Calibre || "", Class: g.Class || "" });
     }
-    const gun = ltc ? null : D.licences.find(x => x.ClientRef !== ref && !isLTC(x) && norm(x.SerialNo) === norm(f.SerialNo) && !["Cancelled"].includes(x.LicenceStatus));
-    if (gun && !await ask(`Serial no ${f.SerialNo} is already on licence ${gun.Title} (${fullName(holder(gun.HolderRef) || {})}). Save anyway?`, { title: "Serial number already used", yes: "Save anyway" })) return;
+    if (!ltc) {                                           // no two firearms with the same serial number
+      const c = serialClash(f.SerialNo, ref);
+      if (c.live) {
+        await ask(`Serial no ${f.SerialNo} already exists:\n${clashText(c.live)}.\n\nA firearm can only be licensed once. Check the serial number, or open that licence instead.`,
+          { title: "Duplicate serial number", yes: "Open that licence", no: "Back to the form" }).then(go => { if (go) { S.dirty = false; location.hash = "#/licence/" + encodeURIComponent(c.live.ClientRef); } });
+        return;
+      }
+      if (c.cancelled && !await ask(`Serial no ${f.SerialNo} was on a cancelled licence:\n${clashText(c.cancelled)}.\n\nRecord it on this licence (e.g. the firearm has a new owner)?`,
+          { title: "Serial number on a cancelled licence", yes: "Yes, record it" })) return;
+    }
     const bgMeta = D.backgrounds.find(b => b.fileId === S.card.bg);
     Object.assign(f, { HolderRef: h.ClientRef, CardBackground: bgMeta ? bgMeta.name : "", CardOrientation: bgMeta ? (bgMeta.Orientation || "Landscape") : S.card.orientation });
     if (isNew) f.CapturedBy = me();
