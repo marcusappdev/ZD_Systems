@@ -227,3 +227,5 @@ canvas.sigview{width:100%;max-width:300px;height:auto;border:1px solid var(--lin
 .field-warn.soft{color:var(--warn);background:var(--warn-bg)}
 .field-warn a{color:inherit}
 input.bad{border-color:var(--bad) !important;box-shadow:0 0 0 2px var(--bad-bg)}
+.carry-offer{margin-top:6px;color:var(--text);font-weight:600}
+.carry-offer .btn{margin-top:6px;display:block;width:100%}

@@ -103,6 +103,13 @@ function serialClash(serial, ref) {
   const same = D.licences.filter(x => x.ClientRef !== ref && !isLTC(x) && serialKey(x.SerialNo) === k);
   return { live: same.find(x => x.LicenceStatus !== "Cancelled"), cancelled: same.find(x => x.LicenceStatus === "Cancelled") };
 }
+/* A person entering a COMPANY firearm's serial most likely carries it: offer the company's
+   licence to carry instead, with the person and the firearm filled in */
+const carryOffer = (person, x) => x && typeOf(x) === "Company" && person && !isCompany(person) && holder(x.HolderRef) ? holder(x.HolderRef) : null;
+function goCarry(person, x) {
+  S.carry = { co: x.HolderRef, person: person.ClientRef, gun: x.ClientRef };
+  S.dirty = false; location.hash = `#/newlicence/${encodeURIComponent(x.HolderRef)}/LTC`;
+}
 const clashText = x => `licence ${x.Title || "(no number)"} - ${fullName(holder(x.HolderRef) || {})}${x.Make || x.FirearmType ? " (" + [x.Make, x.FirearmType].filter(Boolean).join(" ") + ")" : ""}`;
 
 /* ---------------- start ---------------- */
@@ -777,6 +784,17 @@ async function pageLicence() {
   if (isNew && !S.dirty) DRAFT_PHOTO = null;
   const draft = () => isNew ? DRAFT_PHOTO : null;
   const l = existing || { ClientRef: ref, HolderRef: h.ClientRef, LicenceStatus: "Active", IssueDate: today(), ExpiryDate: addYears(today(), RULES.LICENCE_YEARS), LicenceType: type };
+  // came from a person via "Add a licence to carry": the carrier and the firearm are filled in
+  const carry = isNew && ltc && S.carry?.co === h.ClientRef ? S.carry : null;
+  if (carry) {
+    S.carry = null;
+    const p = holder(carry.person) || {};
+    Object.assign(l, { CarryForRef: carry.gun, CarrierSurname: p.Surname || "", CarrierGivenNames: p.GivenNames || "", CarrierMiddleName: p.MiddleName || "",
+      CarrierSex: p.Sex || "", CarrierPhone: p.Phone || "", CarrierAddress: p.Address || "" });
+    const pb = await photoBlob(p);
+    if (pb) { DRAFT_PHOTO = pb; S.draftFace = false; }   // their face is already on file as a holder
+    S.dirty = true;
+  }
   const coGuns = D.licences.filter(x => x.HolderRef === h.ClientRef && typeOf(x) === "Company").sort((a, b) => String(a.Title).localeCompare(String(b.Title)));
   const theNo = licNoFor(h, type) || (existing ? l.Title : "");   // the holder's number; an old licence keeps its own until the holder has one
   if (isNew && !h.LicenceNo) { $("#main").innerHTML = banners() + `<div class="card empty">${esc(fullName(h))} has no licence number yet. Enter it on the holder first -
@@ -887,6 +905,12 @@ async function pageLicence() {
     const c = serialClash(snEl.value, ref), x = c.live || c.cancelled;
     w.hidden = !x; snEl.classList.toggle("bad", !!c.live);
     if (x) w.innerHTML = c.live ? `⚠ Already exists: <a href="#/licence/${encodeURIComponent(x.ClientRef)}">${esc(clashText(x))}</a>` : `On a cancelled licence: ${esc(clashText(x))}`;
+    const co = c.live && carryOffer(h, c.live);
+    if (co) {
+      w.insertAdjacentHTML("beforeend", `<div class="carry-offer">Is ${esc(fullName(h))} carrying this ${esc(fullName(co))} firearm?
+        <button type="button" class="btn sm primary" id="carryGo">Add a licence to carry for ${esc(fullName(h))}</button></div>`);
+      $("#carryGo").onclick = () => goCarry(h, c.live);
+    }
     w.classList.toggle("soft", !c.live);
   };
   if (snEl) { snEl.addEventListener("input", checkSerial); checkSerial(); }
@@ -1004,6 +1028,12 @@ async function pageLicence() {
     }
     if (!ltc) {                                           // no two firearms with the same serial number
       const c = serialClash(f.SerialNo, ref);
+      const co = c.live && carryOffer(h, c.live);
+      if (co) {                                           // a person and a company firearm: they need a licence to carry from the company
+        if (await ask(`Serial no ${f.SerialNo} is ${fullName(co)}'s firearm (${c.live.Title}).\n\nIf ${fullName(h)} carries it, they need a licence to carry from ${fullName(co)} - their details and photo will be filled in.`,
+          { title: "This is a company firearm", yes: `Add a licence to carry`, no: "Back to the form" })) goCarry(h, c.live);
+        return;
+      }
       if (c.live) {
         await ask(`Serial no ${f.SerialNo} already exists:\n${clashText(c.live)}.\n\nA firearm can only be licensed once. Check the serial number, or open that licence instead.`,
           { title: "Duplicate serial number", yes: "Open that licence", no: "Back to the form" }).then(go => { if (go) { S.dirty = false; location.hash = "#/licence/" + encodeURIComponent(c.live.ClientRef); } });
