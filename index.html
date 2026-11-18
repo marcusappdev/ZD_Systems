@@ -86,7 +86,7 @@ const prefixOf = t => LTYPES[t]?.prefix || "";
 const isLTC = l => typeOf(l) === "LTC";
 const carrierName = l => personName({ GivenNames: l?.CarrierGivenNames, MiddleName: l?.CarrierMiddleName, Surname: l?.CarrierSurname });
 /* The licence number belongs to the holder (357 / 677). Each of their licences shows it,
-   with C (company firearm) or LC (licence to carry) in front for a company. */
+   with C in front for a company's firearms; a licence to carry one of the owner's firearms shows LC + it. */
 const cleanNo = v => String(v || "").toUpperCase().replace(/\s+/g, "").replace(/^(LTC|LC|C)(?=\d)/, "");
 const licNoFor = (h, t) => h?.LicenceNo ? prefixOf(t) + cleanNo(h.LicenceNo) : "";
 const ltcsOf = l => D.licences.filter(x => isLTC(x) && x.CarryForRef === l.ClientRef);
@@ -103,9 +103,11 @@ function serialClash(serial, ref) {
   const same = D.licences.filter(x => x.ClientRef !== ref && !isLTC(x) && serialKey(x.SerialNo) === k);
   return { live: same.find(x => x.LicenceStatus !== "Cancelled"), cancelled: same.find(x => x.LicenceStatus === "Cancelled") };
 }
-/* A person entering a COMPANY firearm's serial most likely carries it: offer the company's
-   licence to carry instead, with the person and the firearm filled in */
-const carryOffer = (person, x) => x && typeOf(x) === "Company" && person && !isCompany(person) && holder(x.HolderRef) ? holder(x.HolderRef) : null;
+/* A person entering the serial of someone else's firearm (a company's or another person's)
+   most likely carries it: offer the owner's licence to carry instead, with the person and the
+   firearm filled in. A licence to carry is numbered LC + the OWNER's number (C44 -> LC44, 23 -> LC23). */
+const carryOffer = (person, x) => { const o = x && !isLTC(x) && holder(x.HolderRef);   // the firearm's owner - a company or another person
+  return o && person && !isCompany(person) && o.ClientRef !== person.ClientRef ? o : null; };
 function goCarry(person, x) {
   S.carry = { co: x.HolderRef, person: person.ClientRef, gun: x.ClientRef };
   S.dirty = false; location.hash = `#/newlicence/${encodeURIComponent(x.HolderRef)}/LTC`;
@@ -624,10 +626,10 @@ async function pageHolder() {
             ${guns.map(l => `<tr class="go" data-l="${esc(l.ClientRef)}"><td class="mono"><b>${esc(l.Title)}</b></td><td>${esc(gunText(l))}</td><td title="${esc(className(l.Class))}">${esc(l.Class)}</td><td title="${esc(purposeNames(l.Purpose))}">${esc(l.Purpose)}</td>
               <td>${fmtDate(l.ExpiryDate)}</td><td><span class="tag ${STATUS_TAG[statusOf(l)] || ""}">${statusOf(l)}</span>${l._pending ? ` <span class="tag info">waiting</span>` : ""}</td><td>${l.LastPrinted ? fmtDate(l.LastPrinted) : "—"}</td></tr>`).join("")}</tbody></table>`
             : `<p class="muted small">No licensed firearms yet.</p>`}</div>
-        ${co && !isNew ? `<div class="card"><div class="bar"><h3 style="margin:0">Licences to carry (LC)</h3><span class="grow"></span>
-            ${!ro ? guns.length ? `<a class="btn primary sm" href="#/newlicence/${encodeURIComponent(ref)}/LTC">+ Add licence to carry</a>` : `<span class="small muted">Add a company firearm first</span>` : ""}</div>
+        ${!isNew && (co || guns.length || ltcs.length) ? `<div class="card"><div class="bar"><h3 style="margin:0">Licences to carry (LC${esc(cleanNo(h.LicenceNo))})</h3><span class="grow"></span>
+            ${!ro ? guns.length ? `<a class="btn primary sm" href="#/newlicence/${encodeURIComponent(ref)}/LTC">+ Add licence to carry</a>` : `<span class="small muted">Add a firearm first</span>` : ""}</div>
           ${ltcs.length ? `<table><thead><tr><th></th><th>LC No</th><th>Carrier</th><th>Firearm</th><th>Purpose</th><th>Expires</th></tr></thead><tbody>${ltcs.map(ltcRow).join("")}</tbody></table>`
-            : `<p class="muted small">No licences to carry yet. Each person who carries one of the company's firearms gets their own licence to carry (LC), with their photo and details.</p>`}</div>` : ""}
+            : `<p class="muted small">No licences to carry yet. Each person who carries one of ${co ? "the company's" : "this holder's"} firearms gets their own licence to carry (LC${esc(cleanNo(h.LicenceNo))}), with their photo and details.</p>`}</div>` : ""}
         ${!isNew ? `<div class="card"><h3>History</h3><div id="hist" class="small muted">${online() ? "Loading…" : "History shows when you're online."}</div></div>` : ""}
       </div>
       <div>
@@ -654,7 +656,7 @@ async function pageHolder() {
   const noHint = () => {
     const n = cleanNo(form.elements.LicenceNo.value), c = kindNow() === "Company";
     $("#noHint").innerHTML = !n ? "Shown on every one of this holder's licences. Needed before firearms can be added."
-      : c ? `Company firearms: <b class="mono">C${esc(n)}</b> · Licences to carry: <b class="mono">LC${esc(n)}</b>` : `Every licensed firearm: <b class="mono">${esc(n)}</b>`;
+      : c ? `Company firearms: <b class="mono">C${esc(n)}</b> · Licences to carry: <b class="mono">LC${esc(n)}</b>` : `Every licensed firearm: <b class="mono">${esc(n)}</b> · Licences to carry: <b class="mono">LC${esc(n)}</b>`;
   };
   form.elements.LicenceNo.addEventListener("input", noHint); noHint();
   form.querySelectorAll('[name="HolderKind"]').forEach(r => r.onchange = () => {
@@ -779,7 +781,7 @@ async function pageLicence() {
   if (!isNew && !existing) { $("#main").innerHTML = banners() + `<div class="card empty">That licence isn't in the register${D.offlineCopy ? " copy on this device" : ""}. <a href="#/firearms">Back to licensed firearms</a></div>`; return; }
   if (!h) { $("#main").innerHTML = banners() + `<div class="card empty">The licence holder couldn't be found. <a href="#/">Licence Holders</a></div>`; return; }
   // Individual (no prefix), Company firearm (C...) or Licence to carry (LC...) - fixed once saved
-  const type = existing ? typeOf(existing) : S.sub === "LTC" && isCompany(h) ? "LTC" : isCompany(h) ? "Company" : "Individual";
+  const type = existing ? typeOf(existing) : S.sub === "LTC" ? "LTC" : isCompany(h) ? "Company" : "Individual";
   const pfx = prefixOf(type), ltc = type === "LTC";
   if (isNew && !S.dirty) DRAFT_PHOTO = null;
   const draft = () => isNew ? DRAFT_PHOTO : null;
@@ -795,7 +797,7 @@ async function pageLicence() {
     if (pb) { DRAFT_PHOTO = pb; S.draftFace = false; }   // their face is already on file as a holder
     S.dirty = true;
   }
-  const coGuns = D.licences.filter(x => x.HolderRef === h.ClientRef && typeOf(x) === "Company").sort((a, b) => String(a.Title).localeCompare(String(b.Title)));
+  const coGuns = D.licences.filter(x => x.HolderRef === h.ClientRef && !isLTC(x)).sort((a, b) => String(a.Title).localeCompare(String(b.Title)));
   const theNo = licNoFor(h, type) || (existing ? l.Title : "");   // the holder's number; an old licence keeps its own until the holder has one
   if (isNew && !h.LicenceNo) { $("#main").innerHTML = banners() + `<div class="card empty">${esc(fullName(h))} has no licence number yet. Enter it on the holder first -
     every licence ${isCompany(h) ? "of the company shows it, with C or LC in front" : "they hold shows it"}.<div style="margin-top:12px"><a class="btn primary" href="#/holder/${encodeURIComponent(h.ClientRef)}">Open ${isCompany(h) ? "company" : "holder"}</a></div></div>`; return; }
@@ -817,10 +819,10 @@ async function pageLicence() {
       ${ro ? "" : `<button class="btn primary" id="saveBtn" ${isNew || S.dirty ? "" : "hidden"}>${isNew ? "Save licence" : "Save changes"}</button>`}</div>
     <div class="cols">
       <div>
-        ${ltc ? `<div class="card"><h3>Company</h3><div style="font-size:18px;font-weight:700">${esc(fullName(h))}</div>
+        ${ltc ? `<div class="card"><h3>Firearm owner</h3><div style="font-size:18px;font-weight:700">${esc(fullName(h))}</div>
             <div class="small muted" style="margin:4px 0 8px">${[h.CompanyRegNo ? "IPA " + esc(h.CompanyRegNo) : "", h.Phone ? esc(h.Phone) : ""].filter(Boolean).join(" · ")}</div>
             <div class="small" style="white-space:pre-line">${esc(h.Address)}</div>
-            <div style="margin-top:10px"><a class="btn sm" href="#/holder/${encodeURIComponent(h.ClientRef)}">Open company</a></div></div>`
+            <div style="margin-top:10px"><a class="btn sm" href="#/holder/${encodeURIComponent(h.ClientRef)}">Open ${isCompany(h) ? "company" : "holder"}</a></div></div>`
         : `<div class="card"><h3>${isCompany(h) ? "Company" : "Licence holder"}</h3><div class="photo-box">
           <div id="photoSlot"><div class="nophoto">No photo</div></div>
           <div style="flex:1;min-width:180px"><div style="font-size:18px;font-weight:700">${esc(fullName(h))}</div>
@@ -843,10 +845,10 @@ async function pageLicence() {
             <label>Middle name<input type="text" name="CarrierMiddleName" value="${esc(l.CarrierMiddleName)}" ${dis}></label></div>
           <div class="grid3"><label>Sex<select name="CarrierSex" ${dis}>${["", "M", "F", "X"].map(o => `<option ${o === (l.CarrierSex || "") ? "selected" : ""}>${o}</option>`).join("")}</select></label>
             <label>Phone<input type="text" name="CarrierPhone" value="${esc(l.CarrierPhone)}" ${dis}></label></div>
-          <label>Address (printed on the card, under the company name)<textarea name="CarrierAddress" ${dis}>${esc(l.CarrierAddress)}</textarea></label>
+          <label>Address (printed on the card${isCompany(h) ? ", under the company name" : ""})<textarea name="CarrierAddress" ${dis}>${esc(l.CarrierAddress)}</textarea></label>
           <h3 style="margin-top:18px">Licence to carry</h3>
           <div class="grid3"><label>Licence no (from the ${isCompany(h) ? "company" : "holder"})<input type="text" value="${esc(theNo)}" class="mono" disabled title="Change it on the holder - all of their licences follow"></label>
-            <label>Company firearm *<select name="CarryForRef" ${dis}><option value="">- choose -</option>${coGuns.map(g => `<option value="${esc(g.ClientRef)}" ${g.ClientRef === l.CarryForRef ? "selected" : ""}>${esc(g.Title)} · SN ${esc(g.SerialNo || "")}${g.FirearmType ? " · " + esc(g.FirearmType) : ""}</option>`).join("")}</select></label>
+            <label>Firearm *<select name="CarryForRef" ${dis}><option value="">- choose -</option>${coGuns.map(g => `<option value="${esc(g.ClientRef)}" ${g.ClientRef === l.CarryForRef ? "selected" : ""}>${esc(g.Title)} · SN ${esc(g.SerialNo || "")}${g.FirearmType ? " · " + esc(g.FirearmType) : ""}</option>`).join("")}</select></label>
             <span></span></div>
           <div id="gunInfo" class="small muted" style="margin:-4px 0 12px"></div>
           ${purposePicker(l.Purpose, dis)}
@@ -907,7 +909,7 @@ async function pageLicence() {
     if (x) w.innerHTML = c.live ? `⚠ Already exists: <a href="#/licence/${encodeURIComponent(x.ClientRef)}">${esc(clashText(x))}</a>` : `On a cancelled licence: ${esc(clashText(x))}`;
     const co = c.live && carryOffer(h, c.live);
     if (co) {
-      w.insertAdjacentHTML("beforeend", `<div class="carry-offer">Is ${esc(fullName(h))} carrying this ${esc(fullName(co))} firearm?
+      w.insertAdjacentHTML("beforeend", `<div class="carry-offer">Is ${esc(fullName(h))} carrying ${esc(fullName(co))}'s firearm?
         <button type="button" class="btn sm primary" id="carryGo">Add a licence to carry for ${esc(fullName(h))}</button></div>`);
       $("#carryGo").onclick = () => goCarry(h, c.live);
     }
@@ -925,8 +927,8 @@ async function pageLicence() {
   const showGun = () => {
     const box = $("#gunInfo"); if (!box) return;
     const g = lic(form.elements.CarryForRef.value);
-    box.innerHTML = g ? `Firearm: <b>${esc(gunText(g))}</b>${g.Calibre ? " · " + esc(g.Calibre) : ""} · Class ${esc(g.Class || "—")} · company licence ${esc(g.Title)} (${statusOf(g)})`
-      : coGuns.length ? "Choose which of the company's firearms this person may carry." : `<span style="color:var(--bad)">The company has no firearms yet - add a company firearm first.</span>`;
+    box.innerHTML = g ? `Firearm: <b>${esc(gunText(g))}</b>${g.Calibre ? " · " + esc(g.Calibre) : ""} · Class ${esc(g.Class || "—")} · owner's licence ${esc(g.Title)} (${statusOf(g)})`
+      : coGuns.length ? `Choose which of ${esc(fullName(h))}'s firearms this person may carry.` : `<span style="color:var(--bad)">${esc(fullName(h))} has no firearms yet - add a firearm first.</span>`;
   };
   if (ltc) {
     showCarrier(); showGun();
@@ -1017,7 +1019,7 @@ async function pageLicence() {
   const saveBtn = $("#saveBtn");
   if (saveBtn) saveBtn.onclick = async () => {
     const f = val();
-    const need = ltc ? [["Title", "Licence no"], ["CarrierSurname", "Surname"], ["CarrierGivenNames", "First name"], ["CarryForRef", "Company firearm"], ["Purpose", "Purpose"], ["IssueDate", "Issued"], ["ExpiryDate", "Expires"]]
+    const need = ltc ? [["Title", "Licence no"], ["CarrierSurname", "Surname"], ["CarrierGivenNames", "First name"], ["CarryForRef", "Firearm"], ["Purpose", "Purpose"], ["IssueDate", "Issued"], ["ExpiryDate", "Expires"]]
       : [["Title", "Licence no"], ["Purpose", "Purpose"], ["IssueDate", "Issued"], ["ExpiryDate", "Expires"], ["SerialNo", "Serial no"]];
     const missing = need.filter(([k]) => !f[k]).map(x => x[1]);
     if (missing.length) return toast("Please fill in: " + missing.join(", "));
@@ -1029,9 +1031,9 @@ async function pageLicence() {
     if (!ltc) {                                           // no two firearms with the same serial number
       const c = serialClash(f.SerialNo, ref);
       const co = c.live && carryOffer(h, c.live);
-      if (co) {                                           // a person and a company firearm: they need a licence to carry from the company
-        if (await ask(`Serial no ${f.SerialNo} is ${fullName(co)}'s firearm (${c.live.Title}).\n\nIf ${fullName(h)} carries it, they need a licence to carry from ${fullName(co)} - their details and photo will be filled in.`,
-          { title: "This is a company firearm", yes: `Add a licence to carry`, no: "Back to the form" })) goCarry(h, c.live);
+      if (co) {                                           // someone else's firearm: they need a licence to carry from its owner
+        if (await ask(`Serial no ${f.SerialNo} is ${fullName(co)}'s firearm (${c.live.Title}).\n\nIf ${fullName(h)} carries it, they need a licence to carry from ${fullName(co)} (LC${cleanNo(co.LicenceNo)}) - their details and photo will be filled in.`,
+          { title: `This is ${fullName(co)}'s firearm`, yes: `Add a licence to carry`, no: "Back to the form" })) goCarry(h, c.live);
         return;
       }
       if (c.live) {
@@ -1050,7 +1052,7 @@ async function pageLicence() {
     await enqueue({ kind: "upsert", list: LISTS.licences, ref, fields: f, label: `${isNew ? "New licence" : "Licence changes"} · ${f.Title}` });
     logActivity(isNew ? (ltc ? "Licence to carry created" : "Licence created") : (ltc ? "Licence to carry updated" : "Licence updated"), h, lic(ref), ltc ? carrierName(f) : "");
     if (ltc && draft()) { await queuePhoto(lic(ref), draft(), S.draftFace !== false, LISTS.licences); DRAFT_PHOTO = null; }
-    if (type === "Company" && !isNew) {                    // keep the licences to carry this firearm in step with it
+    if (!ltc && !isNew) {                                  // keep the licences to carry this firearm in step with it
       const gf = { SerialNo: f.SerialNo || "", Make: f.Make || "", Model: f.Model || "", FirearmType: f.FirearmType || "", Calibre: f.Calibre || "", Class: f.Class || "" };
       for (const x of ltcsOf(l)) {
         if (Object.keys(gf).every(k => String(x[k] || "") === gf[k])) continue;
@@ -1066,7 +1068,7 @@ async function pageLicence() {
   if (delBtn) delBtn.onclick = async () => {
     if (!online()) return toast("Deleting needs an internet connection");
     if (docsFor(h, l).length) return toast("This licence has documents - delete them, or Edit them and attach them to the holder, first");
-    if (type === "Company" && ltcsOf(l).length) return toast(`Licences to carry this firearm (${ltcsOf(l).map(x => x.Title).join(", ")}) must be deleted first`);
+    if (!ltc && ltcsOf(l).length) return toast(`Licences to carry this firearm (${ltcsOf(l).map(x => x.Title).join(", ")}) must be deleted first`);
     if (!await ask(`Delete licence ${l.Title} (${fullName(h)})?\n\nIt is removed from the register for good. Use Status "Cancelled" instead if the licence should stay on record.`, { title: "Delete licence", yes: "Delete", danger: true })) return;
     try {
       if (!String(l.id).startsWith("local-")) await deleteItem(LISTS.licences, l.id);
