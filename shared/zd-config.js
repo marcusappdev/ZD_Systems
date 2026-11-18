@@ -57,8 +57,8 @@ const ZD_CHOICES = {
   // Licence types and the prefix the app puts in front of the number the officer types:
   //   Individual  12345678     one per firearm, held by a person
   //   Company     C12345679    one per firearm owned by a company
-  //   LTC         LTC12345671  licence to carry one of the company's firearms - the carrier's photo and details
-  LICENCE_TYPES: { Individual: { prefix: "", label: "Individual" }, Company: { prefix: "C", label: "Company firearm" }, LTC: { prefix: "LTC", label: "Licence to carry" } },
+  //   LTC         LC12345671   licence to carry one of the company's firearms - the carrier's photo and details
+  LICENCE_TYPES: { Individual: { prefix: "", label: "Individual" }, Company: { prefix: "C", label: "Company firearm" }, LTC: { prefix: "LC", label: "Licence to carry" } },
   REP_ROLES: ["Owner", "Chief Executive Officer", "Managing Director", "Director", "General Manager"],
   FIREARM_TYPES: ["Rifle", "Shotgun", "Handgun", "Other"],   // old free-text types (records made before the Type codes)
   // STARTING LISTS ONLY. Admins keep the real Class, Purpose and Type codes in
