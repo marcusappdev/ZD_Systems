@@ -113,6 +113,7 @@ foreach ($c in "SerialNo","Make","Model","FirearmType","Calibre","Purpose","Clas
 foreach ($c in "CarrierSurname","CarrierGivenNames","CarrierMiddleName","CarrierDOB","CarrierSex","CarrierPhone") { Ensure-Field $L $c "Text" }
 Ensure-Field $L "CarrierAddress" "Note"
 Ensure-Field $L "CarryForRef" "Text" -Indexed
+Ensure-Field $L "CarrierRef" "Text" -Indexed     # the carrier's own holder record, when they have one - their LC number follows it
 Ensure-Field $L "HolderRef" "Text" -Indexed
 Ensure-Field $L "ClientRef" "Text" -Indexed
 
