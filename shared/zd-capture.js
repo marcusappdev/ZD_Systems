@@ -178,7 +178,7 @@ function capFormHtml(set) {
     <div class="cap-body">
     ${step(1, "Owner (new owner on the card)")}
     <input type="hidden" name="HolderRef">
-    <div class="grid2"><label>Licence no on the card *<input type="text" name="LicenceNo" class="mono" placeholder="e.g. 114608"></label>
+    <div class="grid2"><label>Licence no on the card *<input type="text" name="OwnerNo" class="mono" placeholder="e.g. 114608"></label>
       <label>or find in the register<input type="search" id="capFind" list="capPeople" placeholder="name or licence no">
         <datalist id="capPeople">${people.map(x => `<option value="${esc((x.LicenceNo ? cleanNo(x.LicenceNo) + " · " : "") + fullName(x))}">`).join("")}</datalist></label></div>
     <div class="cap-status" id="capWho"></div>
@@ -217,14 +217,14 @@ function capFormHtml(set) {
       ${CAP_TYPES.map(t => `<label class="chk"><input type="checkbox" data-ft="${k}" value="${esc(t)}" ${f.types.includes(t) ? "checked" : ""}> ${esc(t)}</label>`).join("")}</div></div>`).join("")}
     </div>
     <div class="cap-foot"><span class="small muted" id="capFootMsg"></span><span class="grow"></span>
-      <button type="button" class="btn" id="capSkip">Skip</button><button type="submit" class="btn primary" id="capSave">Save this set</button></div>`;
+      <button type="button" class="btn" id="capSkip">Skip</button><button type="button" class="btn primary" id="capSave">Save this set</button></div>`;
 }
 
 function capVal(form) {
   const fd = new FormData(form), f = {};
   for (const [k, v] of fd) if (k !== "PurposeCode") f[k] = String(v).trim();
   f.Purpose = purposeOrder(fd.getAll("PurposeCode").map(v => String(v).toUpperCase())).join("");
-  f.LicenceNo = cleanNo(f.LicenceNo);
+  f.LicenceNo = cleanNo(f.OwnerNo);   // named OwnerNo on screen so the browser doesn't offer to "save a driver's licence"
   return f;
 }
 
@@ -232,7 +232,7 @@ function capVal(form) {
 function capOwner(form) {
   const ref = form.elements.HolderRef.value;
   if (ref) return holder(ref);
-  const n = cleanNo(form.elements.LicenceNo.value);
+  const n = cleanNo(form.elements.OwnerNo.value);
   return n ? D.holders.find(x => cleanNo(x.LicenceNo) === n) || null : null;
 }
 
@@ -244,11 +244,11 @@ function capWireForm(set) {
   $("#capFind").addEventListener("change", () => {
     const v = $("#capFind").value.trim().toLowerCase();
     const p = D.holders.find(x => ((x.LicenceNo ? cleanNo(x.LicenceNo) + " · " : "") + fullName(x)).toLowerCase() === v);
-    if (p) { form.elements.HolderRef.value = p.ClientRef; form.elements.LicenceNo.value = cleanNo(p.LicenceNo); $("#capFind").value = ""; capRefresh(form); markDirty(); }
+    if (p) { form.elements.HolderRef.value = p.ClientRef; form.elements.OwnerNo.value = cleanNo(p.LicenceNo); $("#capFind").value = ""; capRefresh(form); markDirty(); }
   });
-  form.elements.LicenceNo.addEventListener("input", () => {   // a different number from the picked holder's = a different owner
+  form.elements.OwnerNo.addEventListener("input", () => {   // a different number from the picked holder's = a different owner
     const p = holder(form.elements.HolderRef.value);
-    if (p && cleanNo(p.LicenceNo) && cleanNo(p.LicenceNo) !== cleanNo(form.elements.LicenceNo.value)) form.elements.HolderRef.value = "";
+    if (p && cleanNo(p.LicenceNo) && cleanNo(p.LicenceNo) !== cleanNo(form.elements.OwnerNo.value)) form.elements.HolderRef.value = "";
     capRefresh(form);
   });
   form.elements.SerialNo.addEventListener("input", () => capRefresh(form));
@@ -258,7 +258,12 @@ function capWireForm(set) {
   });
   $("#capRead")?.addEventListener("click", () => capAutoRead(set, form));
   $("#capSkip").onclick = () => capGo(capNextTodo() >= 0 && capNextTodo() !== CAP.i ? capNextTodo() : CAP.i + 1);
-  form.onsubmit = e => { e.preventDefault(); capSave(set, form); };
+  // No real form submit: browsers (Edge, Chrome) take a submitted form as something to remember
+  // and offer to save the licence no as a driver's licence. Enter in a field saves instead.
+  form.onsubmit = e => e.preventDefault();
+  $("#capSave").onclick = () => capSave(set, form);
+  form.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.matches("input:not([type=search]):not([type=checkbox]):not([type=radio])")) { e.preventDefault(); capSave(set, form); } });
+  form.querySelectorAll("input, select, textarea").forEach(el => { el.setAttribute("autocomplete", "off"); el.setAttribute("data-lpignore", "true"); });
   capShowPhoto(); capRefresh(form);
 }
 
@@ -266,7 +271,7 @@ function capWireForm(set) {
 function capRefresh(form) { capWho(form); capCheckSerial(form); capFoot(form); }
 
 function capWho(form) {
-  const box = $("#capWho"), p = capOwner(form), n = cleanNo(form.elements.LicenceNo.value);
+  const box = $("#capWho"), p = capOwner(form), n = cleanNo(form.elements.OwnerNo.value);
   form.classList.toggle("owner-known", !!p);
   if (p) {
     box.className = "cap-status info";
@@ -302,7 +307,7 @@ function capFoot(form) {
   const el = $("#capFootMsg"); if (!el) return;
   const owner = capOwner(form), sn = form.elements.SerialNo.value.trim();
   const parts = [];
-  if (form.elements.LicenceNo.value.trim()) parts.push(owner ? "existing holder" : "new holder");
+  if (form.elements.OwnerNo.value.trim()) parts.push(owner ? "existing holder" : "new holder");
   if (sn) {
     const k = serialKey(sn), same = D.licences.filter(x => !isLTC(x) && serialKey(x.SerialNo) === k && x.LicenceStatus !== "Cancelled");
     const m = owner && same.find(x => x.HolderRef === owner.ClientRef);
@@ -392,6 +397,7 @@ async function capSave(set, form) {
     }
     set.done = true; set.saved = { holderRef: h.ClientRef, licRef: l.ClientRef, newHolder, newLicence, transfer: transfer?.Title, photo };
     S.dirty = false;
+    form.querySelectorAll("input:not([type=checkbox]):not([type=radio]), textarea").forEach(el => el.value = "");   // nothing left for the browser to offer to save
     pageCapture(); window.scrollTo(0, 0);           // same set, now showing the green "Saved" summary and the Next button
   } finally { const b = $("#capSave"); if (b) b.disabled = false; }
 }
@@ -414,7 +420,7 @@ async function capAutoRead(set, form) {
         const codes = purposeCodes(v);
         form.querySelectorAll('[name="PurposeCode"]').forEach(c => { if (codes.includes(String(c.value).toUpperCase())) c.checked = true; }); n++; continue;
       }
-      const el = form.elements[k]; if (!el || String(el.value).trim()) continue;   // never overwrites what the operator typed
+      const el = form.elements[k === "LicenceNo" ? "OwnerNo" : k]; if (!el || String(el.value).trim()) continue;   // never overwrites what the operator typed
       if (k === "LicenceNo") v = cleanNo(v);
       if (el.tagName === "SELECT" && ![...el.options].some(o => o.value === v)) continue;
       el.value = v; el.classList.add("auto"); n++;
