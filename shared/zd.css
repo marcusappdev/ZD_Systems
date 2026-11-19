@@ -242,14 +242,14 @@ details.purchase[open]>summary{margin-bottom:10px}
 .cap-chip{flex:none;border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:16px;padding:3px 11px;font-size:12px;cursor:pointer;white-space:nowrap}
 .cap-chip.done{background:var(--ok-bg);color:var(--ok);border-color:transparent;font-weight:600}
 .cap-chip.cur{border:2px solid var(--brand);color:var(--text);font-weight:700}
-.cap-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:14px;align-items:stretch;height:calc(100vh - 230px);min-height:520px}
+.cap-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:14px;align-items:stretch;height:calc(100vh - 230px);min-height:520px}
 .cap-view,.cap-side{display:flex;flex-direction:column;min-height:0;margin:0}
 .cap-tabs{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .cap-fname{margin:6px 0}
 .cap-page{flex:1;min-height:0;overflow:auto;background:#555;border-radius:8px;padding:8px}
 .cap-page img{display:block;width:100%;margin:0 auto 8px;background:#fff}
 .cap-page.zoomed img{width:220%;max-width:none}
-.cap-side{padding:0;overflow:hidden}
+.cap-side{padding:0;overflow:hidden;order:-1}   /* form on the left, scan on the right */
 .cap-form{display:flex;flex-direction:column;height:100%;min-height:0}
 .cap-head{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line)}.cap-head h3{margin:0}
 #capMsg:not(:empty){padding:8px 16px 0}
