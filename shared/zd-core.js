@@ -360,6 +360,7 @@ async function demoFace(b) {
     case "licenseeEnrol": { const id = "demo-" + b.ref; if (!lic.includes(b.ref)) lic.push(b.ref); await kvSet("demoface:licensees", lic); return { faceId: id, duplicates: [] }; }
     case "licenseeSearch": return { matches: lic.slice(-1).map(ref => ({ ref, similarity: 97.4 })) };
     case "licenseeRemove": await kvSet("demoface:licensees", lic.filter(r => r !== b.ref)); return { removed: 1 };
+    case "readDocs": return { fields: { Make: "DEMO MAKE", Calibre: "12G", Capacity: "5 rds" }, note: "Demo mode - sample values only, nothing was read." };
   }
   return {};
 }

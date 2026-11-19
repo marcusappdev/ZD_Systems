@@ -82,7 +82,7 @@ const ZD_CHOICES = {
     ["J", "Dealer Ammunition"]
   ],
   // Document types offered when a document is attached (starting list - Admins keep the real one on the Codes page)
-  DOC_TYPES: ["Application form", "Identity document", "Police clearance", "Medical certificate", "Competency certificate",
+  DOC_TYPES: ["PTB", "Delivery Docket", "NOD", "Application form", "Identity document", "Police clearance", "Medical certificate", "Competency certificate",
               "Payment receipt", "Previous licence", "Firearm photo", "Purchase / transfer", "Correspondence", "Other"],
   STATUSES:      ["Active", "Suspended", "Cancelled", "Expired"]
 };
@@ -95,9 +95,13 @@ const ZD_CHOICES = {
                            device that passed one within this many hours
                            may keep working offline. 0 = never work offline.
      LICENCE_YEARS       - default expiry = issue date + this many years
+     AUTO_READ           - Back-capture "Read automatically" button (reads the
+                           scans with AWS Bedrock through zd-face-api). Leave
+                           false until the AWS side is set up and approved.
    ===================================================================== */
 const ZD_RULES = {
   FACE_RECHECK_HOURS:  12,
   OFFLINE_GRACE_HOURS: 12,
-  LICENCE_YEARS:       1
+  LICENCE_YEARS:       1,
+  AUTO_READ:           false
 };

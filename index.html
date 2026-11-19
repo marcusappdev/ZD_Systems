@@ -368,7 +368,7 @@ function openCamera({ title, sub, take = "Take photo", selfie = false, guide = "
 }
 
 /* ---------------- crop to a 3 x 4 passport-style photo ---------------- */
-function openCrop(blob) {
+function openCrop(blob, { maxZoom = 4 } = {}) {
   return new Promise(async resolve => {
     let bmp;
     try { bmp = await createImageBitmap(blob); } catch { toast("That file isn't a photo this browser can read"); return resolve(null); }
@@ -396,7 +396,8 @@ function openCrop(blob) {
     cv.onpointerdown = e => { drag = { x: e.clientX, y: e.clientY }; cv.setPointerCapture(e.pointerId); };
     cv.onpointermove = e => { if (!drag) return; const sc = base() * z; cx -= (e.clientX - drag.x) / sc; cy -= (e.clientY - drag.y) / sc; drag = { x: e.clientX, y: e.clientY }; paint(); };
     cv.onpointerup = () => drag = null;
-    cv.onwheel = e => { e.preventDefault(); z = Math.min(4, Math.max(1, z * (e.deltaY < 0 ? 1.08 : 1 / 1.08))); zoomEl.value = z; paint(); };
+    zoomEl.max = maxZoom;
+    cv.onwheel = e => { e.preventDefault(); z = Math.min(maxZoom, Math.max(1, z * (e.deltaY < 0 ? 1.08 : 1 / 1.08))); zoomEl.value = z; paint(); };
     zoomEl.oninput = () => { z = +zoomEl.value; paint(); };
     $("#cropRot").onclick = () => {
       const r = document.createElement("canvas"); r.width = src.height; r.height = src.width;
@@ -434,7 +435,7 @@ function logActivity(action, h, l, details = "") {
 
 /* ---------------- header, routing ---------------- */
 const NAV = [
-  ["", "Licence Holders", () => true], ["firearms", "Licensed Firearms", () => true], ["newholder", "+ New Holder", canEdit], ["face", "Find by Face", canEdit], ["reports", "Reports", () => true],
+  ["", "Licence Holders", () => true], ["firearms", "Licensed Firearms", () => true], ["newholder", "+ New Holder", canEdit], ["face", "Find by Face", canEdit], ["capture", "Back-capture", canEdit], ["reports", "Reports", () => true],
   ["backgrounds", "Card Backgrounds", isAdmin], ["codes", "Codes", isAdmin], ["staff", "Staff", isAdmin], ["settings", "Settings", () => true]];
 function renderNav() {
   $("#logo").innerHTML = `${esc(String(BRAND.COMPANY).toUpperCase())}${DEMO ? "<small>demo</small>" : ""}`;
@@ -477,11 +478,11 @@ function route(quiet) {
     markDirty(); f.dispatchEvent(new Event("input"));
   });
   if (S.mobile) return mobileRoute(next, param);
-  const allowed = { "": true, reports: true, firearms: true, holders: true, holder: true, licence: true, newholder: canEdit(), newlicence: canEdit(), face: canEdit(), backgrounds: isAdmin(), codes: isAdmin(), staff: isAdmin(), settings: true };
+  const allowed = { "": true, reports: true, capture: canEdit(), firearms: true, holders: true, holder: true, licence: true, newholder: canEdit(), newlicence: canEdit(), face: canEdit(), backgrounds: isAdmin(), codes: isAdmin(), staff: isAdmin(), settings: true };
   if (!allowed[next]) { location.hash = "#/"; return; }
   renderNav();
   ({ "": pageHolders, firearms: pageRegister, holders: pageHolders, holder: pageHolder, newholder: pageHolder, licence: pageLicence, newlicence: pageLicence,
-     face: pageFace, reports: pageReports, backgrounds: pageBackgrounds, codes: pageCodes, staff: pageStaff, settings: pageSettings })[next]();
+     face: pageFace, reports: pageReports, capture: () => pageCapture(), backgrounds: pageBackgrounds, codes: pageCodes, staff: pageStaff, settings: pageSettings })[next]();
 }
 function banners() {
   let h = "";
@@ -879,7 +880,19 @@ async function pageLicence() {
             <label>Expires *<input type="date" name="ExpiryDate" value="${esc(String(l.ExpiryDate || "").slice(0, 10))}" ${dis}></label>
             <label>Status<select name="LicenceStatus" ${dis}>${opt(CHOICES.STATUSES, l.LicenceStatus || "Active")}</select></label></div>
           <div class="grid3"><label>Class (not printed)<select name="Class" ${dis}>${codeOptions(codeList("Class"), l.Class || "")}</select></label>
-            <label>Model (not printed)<input type="text" name="Model" value="${esc(l.Model)}" ${dis}></label><span></span></div>
+            <label>Model (not printed)<input type="text" name="Model" value="${esc(l.Model)}" ${dis}></label>
+            <label>Chamber capacity<input type="text" name="Capacity" value="${esc(l.Capacity)}" placeholder="e.g. 5 rds" ${dis}></label></div>
+          <details class="purchase" ${l.PTBNo || l.PrevOwner || l.PrevLicenceNo ? "open" : ""}><summary>Purchase &amp; transfer (Permit to Buy, Delivery Docket, Notice of Disposal)</summary>
+            <div class="grid3"><label>PTB no<input type="text" name="PTBNo" value="${esc(l.PTBNo)}" class="mono" ${dis}></label>
+              <label>PTB dated<input type="date" name="PTBDate" value="${esc(String(l.PTBDate || "").slice(0, 10))}" ${dis}></label>
+              <label>Delivered (docket)<input type="date" name="DeliveredDate" value="${esc(String(l.DeliveredDate || "").slice(0, 10))}" ${dis}></label></div>
+            <div class="grid2"><label>Official receipt no<input type="text" name="ReceiptNo" value="${esc(l.ReceiptNo)}" class="mono" ${dis}></label>
+              <label>Office of issue<input type="text" name="OfficeOfIssue" value="${esc(l.OfficeOfIssue)}" ${dis}></label></div>
+            <div class="grid2"><label>Previous owner (NOD)<input type="text" name="PrevOwner" list="prevOwners" value="${esc(l.PrevOwner)}" ${dis}>
+                <datalist id="prevOwners">${D.holders.map(x => `<option value="${esc(fullName(x))}">`).join("")}</datalist></label>
+              <label>Previous licence no<input type="text" name="PrevLicenceNo" value="${esc(l.PrevLicenceNo)}" class="mono" ${dis}></label></div>
+            <div class="grid2"><label>NOD dated<input type="date" name="NODDate" value="${esc(String(l.NODDate || "").slice(0, 10))}" ${dis}></label><span></span></div>
+          </details>
           <div class="grid2"><label>Barcode no. (back of the two-sided card · blank = licence no)<input type="text" name="BarcodeNo" value="${esc(l.BarcodeNo)}" class="mono" placeholder="e.g. GLCS2020-076240" ${dis}></label></div>
           <label>Notes (not printed)<textarea name="Notes" ${dis}>${esc(l.Notes)}</textarea></label>
           ${type === "Company" && !isNew ? `<p class="small muted" style="margin-bottom:0">${ltcsOf(l).length ? `Licences to carry this firearm: ${ltcsOf(l).map(x => `<a href="#/licence/${encodeURIComponent(x.ClientRef)}" class="mono">${esc(x.Title)}</a> ${esc(carrierName(x))}`).join(" · ")}` : "No licences to carry this firearm yet."}</p>` : ""}`}
@@ -909,6 +922,7 @@ async function pageLicence() {
     const f = Object.fromEntries([...fd].filter(([k]) => k !== "PurposeCode").map(([k, v]) => [k, String(v).trim()]));
     f.Purpose = purposeOrder(fd.getAll("PurposeCode").map(v => String(v).toUpperCase())).join("");   // e.g. "BEFG"
     f.Title = theNo; f.LicenceType = type;
+    if ("PrevOwner" in f) f.PrevOwnerRef = (D.holders.find(x => norm(fullName(x)) === norm(f.PrevOwner)) || {}).ClientRef || "";   // linked when they're in the register
     if (ltc) { f.Title = withPfx("LC", cleanNo(f.CarrierNo)); delete f.CarrierNo; }   // LC + the carrier's own number (LC108)
     return f;
   };
@@ -2001,5 +2015,6 @@ async function openSyncPanel() {
   });
 }
 </script>
+<script src="shared/zd-capture.js?v=20261119"></script>
 </body>
 </html>

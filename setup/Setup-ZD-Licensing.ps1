@@ -114,6 +114,10 @@ foreach ($c in "CarrierSurname","CarrierGivenNames","CarrierMiddleName","Carrier
 Ensure-Field $L "CarrierAddress" "Note"
 Ensure-Field $L "CarryForRef" "Text" -Indexed
 Ensure-Field $L "CarrierRef" "Text" -Indexed     # the carrier's own holder record, when they have one - their LC number follows it
+# Back-capture of the paper files: Permit to Buy, Delivery Docket, Notice of Disposal
+foreach ($c in "Capacity","PTBNo","PTBDate","ReceiptNo","OfficeOfIssue","DeliveredDate","NODDate","PrevOwner","PrevLicenceNo") { Ensure-Field $L $c "Text" }
+Ensure-Field $L "PrevOwnerRef" "Text" -Indexed   # the previous owner's holder record (e.g. ZD SYSTEMS), when they're in the register
+Ensure-Field $L "SourceFile" "Note"              # the scanned file names the licence was captured from
 Ensure-Field $L "HolderRef" "Text" -Indexed
 Ensure-Field $L "ClientRef" "Text" -Indexed
 
