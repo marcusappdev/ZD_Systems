@@ -18,13 +18,19 @@ const CAP = { files: [], sets: [], i: 0, photo: null, pages: {} };
 const CAP_TYPES = ["PTB", "Delivery Docket", "NOD"];
 const CAP_TYPE_NAMES = { PTB: "Permit to Buy", "Delivery Docket": "Delivery Docket", NOD: "Notice of Disposal" };
 
-/* "20261119-001_PTB_Guo_Shujie.pdf" -> { date, seq, kind, person } */
+/* "20261119-001_PTB_Guo_Shujie.pdf" -> { date, seq, kind, person }. Forgiving about the separators:
+   "20261119-002 NOD, Guo Shujie.pdf" and "20261119-002_NOD_Guo_Shujie.pdf" read the same.
+   A name that doesn't follow the pattern fills nothing in (person ""). */
 function capParse(name) {
-  const m = String(name).match(/^(\d{8})-(\d+)_([^_]+)_(.+?)\.(pdf|jpe?g|png|tiff?)$/i);
-  if (!m) return { person: name.replace(/\.[^.]+$/, ""), kind: "", date: "", seq: "" };
+  const stem = String(name).replace(/\.[^.]+$/, ""), sep = "[\\s_,.\\-]+";
+  const m = stem.match(new RegExp(`^(\\d{8})(?:[-_ ]*(\\d{1,4}))?${sep}(PTB|NOD|DD|DOCKET|DELIVERY(?:${sep}DOCKET)?)${sep}(.+)$`, "i"))
+    || stem.match(new RegExp(`^()()(PTB|NOD|DD|DOCKET|DELIVERY(?:${sep}DOCKET)?)${sep}(.+)$`, "i"));
+  if (!m) return { stem, person: "", kind: "", date: "", seq: "" };
   const d = m[1];
-  return { date: `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`, seq: m[2], kind: m[3].toUpperCase(), person: m[4].replace(/[_-]+/g, " ").trim() };
+  return { stem, date: d ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : "", seq: m[2] || "", kind: m[3].toUpperCase().replace(/\W+/g, " "),
+    person: m[4].replace(/[_,.\-]+/g, " ").replace(/\s+/g, " ").trim() };
 }
+const capLabel = (s, k) => s.person || s.files[0].info.stem || "Set " + (k + 1);
 /* The document types a file most likely holds: the PTB sheet also carries the Delivery Docket */
 function capGuessTypes(kind) {
   if (/^PTB/.test(kind)) return ["PTB", "Delivery Docket"];
@@ -42,7 +48,7 @@ function capLoadFiles(fileList) {
   CAP.sets = [];
   for (const f of CAP.files) {
     const last = CAP.sets[CAP.sets.length - 1];
-    if (last && norm(last.person) === norm(f.info.person)) last.files.push(f);
+    if (last && f.info.person && norm(last.person) === norm(f.info.person)) last.files.push(f);
     else CAP.sets.push({ person: f.info.person, files: [f] });
   }
   CAP.sets.forEach(s => s.done = s.files.every(capDone));
@@ -96,7 +102,7 @@ function pageCapture() {
       : `<div class="cap-progress">
         <div class="cap-count"><b>Set ${CAP.i + 1} of ${CAP.sets.length}</b><span class="muted"> · ${doneN} saved · ${CAP.sets.length - doneN} to do</span></div>
         <div class="cap-meter"><span style="width:${Math.round(100 * doneN / CAP.sets.length)}%"></span></div>
-        <div class="cap-chips">${CAP.sets.map((s, k) => `<button type="button" class="cap-chip ${s.done ? "done" : ""} ${k === CAP.i ? "cur" : ""}" data-set="${k}" title="${esc(s.files.map(f => f.name).join("\n"))}">${s.done ? "✓ " : ""}${esc(s.person || "Set " + (k + 1))}</button>`).join("")}</div></div>
+        <div class="cap-chips">${CAP.sets.map((s, k) => `<button type="button" class="cap-chip ${s.done ? "done" : ""} ${k === CAP.i ? "cur" : ""}" data-set="${k}" title="${esc(s.files.map(f => f.name).join("\n"))}">${s.done ? "✓ " : ""}${esc(capLabel(s, k))}</button>`).join("")}</div></div>
       <div class="cap-grid">
         <div class="card cap-view"><div class="cap-tabs">
             ${set.files.map((f, k) => `<button type="button" class="btn sm ${k === (CAP.tab || 0) ? "primary" : ""}" data-tab="${k}" title="${esc(f.name)}">${esc(f.info.kind || "Scan " + (k + 1))}</button>`).join("")}
@@ -163,7 +169,7 @@ function capSavedHtml(set) {
     ${row("Transfer", r.transfer ? `licence ${esc(r.transfer)} marked Cancelled` : "")}
     ${row("Photo", r.photo ? "added from the scan" : "")}
     ${row("Documents", set.files.map(f => esc(f.name)).join("<br>"))}
-    <div class="cap-actions">${next >= 0 ? `<button type="button" class="btn primary" id="capNextSet">Next set: ${esc(CAP.sets[next].person || "set " + (next + 1))} →</button>`
+    <div class="cap-actions">${next >= 0 ? `<button type="button" class="btn primary" id="capNextSet">Next set: ${esc(capLabel(CAP.sets[next], next))} →</button>`
       : `<div class="cap-alldone">All ${CAP.sets.length} sets in this batch are done. Use <b>+ Add more scans</b> for the next batch.</div>`}</div>`;
 }
 
@@ -172,13 +178,15 @@ function capFormHtml(set) {
   const people = D.holders.slice().sort((a, b) => sortName(a).localeCompare(sortName(b)));
   const nameParts = String(set.person || "").split(/\s+/);   // file names are First_Last as on the card (Guo_Shujie) - check against the card
   const step = (n, t) => `<h4 class="cap-step"><span>${n}</span>${t}</h4>`;
-  return `<div class="cap-head"><h3>${esc(set.person || "Set " + (CAP.i + 1))}</h3><span class="grow"></span>
+  return `<div class="cap-head"><h3>${esc(capLabel(set, CAP.i))}</h3><span class="grow"></span>
       ${RULES.AUTO_READ ? `<button type="button" class="btn sm" id="capRead">Read automatically</button>` : ""}</div>
-    <div id="capMsg" class="small"></div>
+    <div id="capMsg" class="small">${set.person
+      ? `<span class="tag info">From the file name</span> ${esc(set.person)} · ${set.files.map(f => esc(f.info.kind || "?")).join(" + ")} - the names below are filled in from it. Everything else is typed from the scan.`
+      : `<span class="tag warn">File name not recognised</span> Nothing is filled in. Name scans like <span class="mono">20261119-001_PTB_First_Last.pdf</span> so the names fill in and the PTB and NOD scans join up.`}</div>
     <div class="cap-body">
     ${step(1, "Owner (new owner on the card)")}
     <input type="hidden" name="HolderRef">
-    <div class="grid2"><label>Licence no on the card *<input type="text" name="LicenceNo" class="mono" placeholder="e.g. 114608"></label>
+    <div class="grid2"><label>Licence no on the card *<input type="text" name="OwnerNo" class="mono" placeholder="e.g. 114608"></label>
       <label>or find in the register<input type="search" id="capFind" list="capPeople" placeholder="name or licence no">
         <datalist id="capPeople">${people.map(x => `<option value="${esc((x.LicenceNo ? cleanNo(x.LicenceNo) + " · " : "") + fullName(x))}">`).join("")}</datalist></label></div>
     <div class="cap-status" id="capWho"></div>
@@ -217,14 +225,14 @@ function capFormHtml(set) {
       ${CAP_TYPES.map(t => `<label class="chk"><input type="checkbox" data-ft="${k}" value="${esc(t)}" ${f.types.includes(t) ? "checked" : ""}> ${esc(t)}</label>`).join("")}</div></div>`).join("")}
     </div>
     <div class="cap-foot"><span class="small muted" id="capFootMsg"></span><span class="grow"></span>
-      <button type="button" class="btn" id="capSkip">Skip</button><button type="submit" class="btn primary" id="capSave">Save this set</button></div>`;
+      <button type="button" class="btn" id="capSkip">Skip</button><button type="button" class="btn primary" id="capSave">Save this set</button></div>`;
 }
 
 function capVal(form) {
   const fd = new FormData(form), f = {};
   for (const [k, v] of fd) if (k !== "PurposeCode") f[k] = String(v).trim();
   f.Purpose = purposeOrder(fd.getAll("PurposeCode").map(v => String(v).toUpperCase())).join("");
-  f.LicenceNo = cleanNo(f.LicenceNo);
+  f.LicenceNo = cleanNo(f.OwnerNo);   // named OwnerNo on screen so the browser doesn't offer to "save a driver's licence"
   return f;
 }
 
@@ -232,7 +240,7 @@ function capVal(form) {
 function capOwner(form) {
   const ref = form.elements.HolderRef.value;
   if (ref) return holder(ref);
-  const n = cleanNo(form.elements.LicenceNo.value);
+  const n = cleanNo(form.elements.OwnerNo.value);
   return n ? D.holders.find(x => cleanNo(x.LicenceNo) === n) || null : null;
 }
 
@@ -244,11 +252,11 @@ function capWireForm(set) {
   $("#capFind").addEventListener("change", () => {
     const v = $("#capFind").value.trim().toLowerCase();
     const p = D.holders.find(x => ((x.LicenceNo ? cleanNo(x.LicenceNo) + " · " : "") + fullName(x)).toLowerCase() === v);
-    if (p) { form.elements.HolderRef.value = p.ClientRef; form.elements.LicenceNo.value = cleanNo(p.LicenceNo); $("#capFind").value = ""; capRefresh(form); markDirty(); }
+    if (p) { form.elements.HolderRef.value = p.ClientRef; form.elements.OwnerNo.value = cleanNo(p.LicenceNo); $("#capFind").value = ""; capRefresh(form); markDirty(); }
   });
-  form.elements.LicenceNo.addEventListener("input", () => {   // a different number from the picked holder's = a different owner
+  form.elements.OwnerNo.addEventListener("input", () => {   // a different number from the picked holder's = a different owner
     const p = holder(form.elements.HolderRef.value);
-    if (p && cleanNo(p.LicenceNo) && cleanNo(p.LicenceNo) !== cleanNo(form.elements.LicenceNo.value)) form.elements.HolderRef.value = "";
+    if (p && cleanNo(p.LicenceNo) && cleanNo(p.LicenceNo) !== cleanNo(form.elements.OwnerNo.value)) form.elements.HolderRef.value = "";
     capRefresh(form);
   });
   form.elements.SerialNo.addEventListener("input", () => capRefresh(form));
@@ -258,7 +266,12 @@ function capWireForm(set) {
   });
   $("#capRead")?.addEventListener("click", () => capAutoRead(set, form));
   $("#capSkip").onclick = () => capGo(capNextTodo() >= 0 && capNextTodo() !== CAP.i ? capNextTodo() : CAP.i + 1);
-  form.onsubmit = e => { e.preventDefault(); capSave(set, form); };
+  // No real form submit: browsers (Edge, Chrome) take a submitted form as something to remember
+  // and offer to save the licence no as a driver's licence. Enter in a field saves instead.
+  form.onsubmit = e => e.preventDefault();
+  $("#capSave").onclick = () => capSave(set, form);
+  form.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.matches("input:not([type=search]):not([type=checkbox]):not([type=radio])")) { e.preventDefault(); capSave(set, form); } });
+  form.querySelectorAll("input, select, textarea").forEach(el => { el.setAttribute("autocomplete", "off"); el.setAttribute("data-lpignore", "true"); });
   capShowPhoto(); capRefresh(form);
 }
 
@@ -266,7 +279,7 @@ function capWireForm(set) {
 function capRefresh(form) { capWho(form); capCheckSerial(form); capFoot(form); }
 
 function capWho(form) {
-  const box = $("#capWho"), p = capOwner(form), n = cleanNo(form.elements.LicenceNo.value);
+  const box = $("#capWho"), p = capOwner(form), n = cleanNo(form.elements.OwnerNo.value);
   form.classList.toggle("owner-known", !!p);
   if (p) {
     box.className = "cap-status info";
@@ -302,7 +315,7 @@ function capFoot(form) {
   const el = $("#capFootMsg"); if (!el) return;
   const owner = capOwner(form), sn = form.elements.SerialNo.value.trim();
   const parts = [];
-  if (form.elements.LicenceNo.value.trim()) parts.push(owner ? "existing holder" : "new holder");
+  if (form.elements.OwnerNo.value.trim()) parts.push(owner ? "existing holder" : "new holder");
   if (sn) {
     const k = serialKey(sn), same = D.licences.filter(x => !isLTC(x) && serialKey(x.SerialNo) === k && x.LicenceStatus !== "Cancelled");
     const m = owner && same.find(x => x.HolderRef === owner.ClientRef);
@@ -392,6 +405,7 @@ async function capSave(set, form) {
     }
     set.done = true; set.saved = { holderRef: h.ClientRef, licRef: l.ClientRef, newHolder, newLicence, transfer: transfer?.Title, photo };
     S.dirty = false;
+    form.querySelectorAll("input:not([type=checkbox]):not([type=radio]), textarea").forEach(el => el.value = "");   // nothing left for the browser to offer to save
     pageCapture(); window.scrollTo(0, 0);           // same set, now showing the green "Saved" summary and the Next button
   } finally { const b = $("#capSave"); if (b) b.disabled = false; }
 }
@@ -414,7 +428,7 @@ async function capAutoRead(set, form) {
         const codes = purposeCodes(v);
         form.querySelectorAll('[name="PurposeCode"]').forEach(c => { if (codes.includes(String(c.value).toUpperCase())) c.checked = true; }); n++; continue;
       }
-      const el = form.elements[k]; if (!el || String(el.value).trim()) continue;   // never overwrites what the operator typed
+      const el = form.elements[k === "LicenceNo" ? "OwnerNo" : k]; if (!el || String(el.value).trim()) continue;   // never overwrites what the operator typed
       if (k === "LicenceNo") v = cleanNo(v);
       if (el.tagName === "SELECT" && ![...el.options].some(o => o.value === v)) continue;
       el.value = v; el.classList.add("auto"); n++;
