@@ -435,11 +435,11 @@ function logActivity(action, h, l, details = "") {
 
 /* ---------------- header, routing ---------------- */
 const NAV = [
-  ["", "Licence Holders", () => true], ["firearms", "Licensed Firearms", () => true], ["newholder", "+ New Holder", canEdit], ["face", "Find by Face", canEdit], ["capture", "Back-capture", canEdit], ["reports", "Reports", () => true],
+  ["", "Licence Holders", () => true], ["firearms", "Licensed Firearms", () => true], ["capture", "Back-capture", canEdit], ["reports", "Reports", () => true],
   ["backgrounds", "Card Backgrounds", isAdmin], ["codes", "Codes", isAdmin], ["staff", "Staff", isAdmin], ["settings", "Settings", () => true]];
 function renderNav() {
   $("#logo").innerHTML = `${esc(String(BRAND.COMPANY).toUpperCase())}${DEMO ? "<small>demo</small>" : ""}`;
-  const cur = { licence: "firearms", newlicence: "", holder: "", holders: "" }[S.route] ?? S.route;
+  const cur = { licence: "firearms", newlicence: "", holder: "", holders: "", newholder: "", face: "" }[S.route] ?? S.route;   // New Holder and Find by Face open from the holders list
   $("#nav").innerHTML = NAV.filter(n => n[2]()).map(([k, label]) => `<a href="#/${k}" class="${(k || "home") === (cur || "home") ? "on" : ""}">${label}</a>`).join("");
   renderWho();
 }
@@ -560,8 +560,8 @@ function pageHolders() {
   $("#main").innerHTML = banners() + `
     <div class="bar"><h2>Licence holders</h2><span class="muted">${D.holders.length}</span><span class="grow"></span>
       <input type="search" id="hq" placeholder="Search name, company, phone, licence or serial no…" value="${esc(S.hq || "")}" style="max-width:320px">
-      ${canEdit() ? `<a class="btn primary" href="#/newholder">+ New Holder</a>` : ""}</div>
-    ${canEdit() ? `<div class="banner info">A licence holder is a person or a company with one licence number (e.g. 357), and any number of licensed firearms - each firearm has its own licence and card showing that number. A company's firearms show C677 and its licences to carry (one per person carrying one of its firearms) show LTC677.</div>` : ""}
+      ${canEdit() ? `<a class="btn" href="#/face">Find by Face</a><a class="btn primary" href="#/newholder">+ New Holder</a>` : ""}</div>
+    ${canEdit() ? `<div class="banner info">A licence holder is a person or a company with one licence number (e.g. 357), and any number of licensed firearms - each firearm has its own licence and card showing that number. A company's firearms show C 677. A licence to carry shows LC and the carrier's own licence number (e.g. LC 108).</div>` : ""}
     <div class="card" style="padding:0;overflow:auto">${rows.length ? `<table><thead><tr><th></th><th>Name</th><th>Born / IPA no</th><th>Phone</th><th>Lic No</th><th>Licences</th><th>Face</th></tr></thead><tbody>
       ${rows.slice(0, 500).map(h => { const ls = D.licences.filter(l => l.HolderRef === h.ClientRef); return `<tr class="go" data-h="${esc(h.ClientRef)}">
         <td><img class="thumb" data-photo="${esc(h.ClientRef)}" alt=""></td><td><b>${esc(fullName(h))}</b>${h._pending ? ` <span class="tag info">waiting to send</span>` : ""}
