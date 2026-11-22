@@ -28,7 +28,7 @@ const ZD_FACE_API = "https://fffkbkm4phzo7ivupypwqq4xbq0razio.lambda-url.ap-sout
 /* Back-capture "Read automatically" service (aws/zd-reader, CloudFormation stack
    "zd-reader"). Paste the stack's ReadUrl output here, then set ZD_RULES.AUTO_READ
    to true. "" = not set up. This is ZD's own stack - never DPM's dpm-reader address. */
-const ZD_READ_API = "";
+const ZD_READ_API = "https://ig5e5gddil.execute-api.ap-southeast-2.amazonaws.com/read";   // zd-reader stack (Concept-RPYC-POC account, Sydney)
 
 /* =====================================================================
    Branding and names
@@ -109,5 +109,5 @@ const ZD_RULES = {
   FACE_RECHECK_HOURS:  12,
   OFFLINE_GRACE_HOURS: 12,
   LICENCE_YEARS:       1,
-  AUTO_READ:           false
+  AUTO_READ:           true
 };
