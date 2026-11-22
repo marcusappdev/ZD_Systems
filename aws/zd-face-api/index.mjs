@@ -22,9 +22,8 @@
 //                                      replaces any earlier face for that licence
 //   licenseeSearch { image }        -> { matches:[{ref, similarity}] }
 //   licenseeRemove { ref }          -> (admin) remove a licence holder's face
-//   readDocs       { images, names } -> { fields, note }  back-capture: reads scanned
-//                                      PTB / Delivery Docket / NOD pages with Claude on
-//                                      Amazon Bedrock. Off unless BEDROCK_MODEL is set.
+//
+// Reading back-capture scans is NOT done here: it has its own stack, aws/zd-reader.
 //
 // Photos are never stored here - only Rekognition face prints.
 
@@ -280,57 +279,6 @@ async function licenseeRemove(user, ref) {
   return { removed: await remove(LICENSEE_COLLECTION, checkRef(ref)) };
 }
 
-// ---------- Back-capture: reading scanned documents (Amazon Bedrock) ----------
-// Needs: env BEDROCK_MODEL (e.g. the AU inference profile for Claude Haiku 4.5),
-// bedrock:InvokeModel on the Lambda role, and a timeout of 60 s. The scans are
-// sent to Bedrock for this one request only and are not stored here.
-
-const BEDROCK_MODEL = process.env.BEDROCK_MODEL || "";
-const READ_FIELDS = {
-  LicenceNo: "the NEW owner's licence number printed on the licence card copy (digits only, no letters)",
-  HolderKind: "\"Company\" if the new owner is a company, otherwise \"Individual\"",
-  Surname: "new owner's surname", GivenNames: "new owner's first name", MiddleName: "new owner's middle name(s)",
-  CompanyName: "company name, if the owner is a company",
-  Address: "new owner's address as printed on the licence card copy (else the PTB)",
-  SerialNo: "firearm serial number, exactly as printed", Make: "firearm make, e.g. WINCHESTER", Model: "firearm model, e.g. SPA",
-  FirearmType: "type code printed on the card if any (e.g. SG, R, P)", Calibre: "calibre or gauge, e.g. 12G", Capacity: "chamber / magazine capacity, e.g. 5 rds",
-  Purpose: "purpose code letter(s) printed on the card, e.g. B or BEFG",
-  ExpiryDate: "licence expiry date (YYYY-MM-DD)", IssueDate: "licence issue date if shown (YYYY-MM-DD)",
-  PTBNo: "Permit to Buy number", PTBDate: "date the Permit to Buy was issued (YYYY-MM-DD)",
-  DeliveredDate: "date on the Delivery Docket (YYYY-MM-DD)", ReceiptNo: "official receipt number for the fee", OfficeOfIssue: "office where the permit was issued",
-  PrevOwner: "previous owner / seller named on the Notice of Disposal", PrevLicenceNo: "previous owner's licence number on the Notice of Disposal",
-  NODDate: "date of the Notice of Disposal (YYYY-MM-DD)",
-};
-let bedrock = null;
-async function readDocs(user, images, names) {
-  if (!BEDROCK_MODEL) throw new UserError("Automatic reading isn't switched on", "READ_OFF", 400);
-  const list = (Array.isArray(images) ? images : []).slice(0, 6).map(imageBytes);
-  if (!list.length) throw new UserError("No pages supplied", "NO_IMAGE");
-  if (!bedrock) {
-    const m = await import("@aws-sdk/client-bedrock-runtime");
-    bedrock = { client: new m.BedrockRuntimeClient({}), Converse: m.ConverseCommand };
-  }
-  const prompt = `These are scanned Papua New Guinea firearms licensing documents for ONE firearm sale: a Permit to Buy (PTB, often handwritten),
-a Delivery Docket (often with a photocopy of the newly issued licence card) and/or a Notice of Disposal (NOD).
-File names: ${(Array.isArray(names) ? names : []).map(String).join(", ").slice(0, 400)}.
-Read them and reply with ONLY a JSON object with these keys (use "" when a value isn't shown or you can't read it - never guess):
-${Object.entries(READ_FIELDS).map(([k, v]) => `- ${k}: ${v}`).join("\n")}
-Prefer the printed licence card for the owner's details. Dates as YYYY-MM-DD. Names in normal capitalisation.
-Optionally add "note": one short sentence about anything unclear.`;
-  const out = await bedrock.client.send(new bedrock.Converse({
-    modelId: BEDROCK_MODEL,
-    messages: [{ role: "user", content: [...list.map((bytes) => ({ image: { format: "jpeg", source: { bytes } } })), { text: prompt }] }],
-    inferenceConfig: { maxTokens: 1200, temperature: 0 },
-  }));
-  const text = (out.output?.message?.content || []).map((c) => c.text || "").join("");
-  let got = {};
-  try { got = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)); } catch { got = {}; }
-  const fields = {};
-  for (const k of Object.keys(READ_FIELDS)) if (typeof got[k] === "string" && got[k].trim()) fields[k] = got[k].trim().slice(0, 300);
-  console.log(JSON.stringify({ action: "readDocs", by: user.email, pages: list.length, filled: Object.keys(fields).length, tokens: out.usage }));
-  return { fields, note: typeof got.note === "string" ? got.note.slice(0, 300) : "" };
-}
-
 // ---------- Entry point ----------
 
 export const handler = async (event) => {
@@ -358,7 +306,6 @@ export const handler = async (event) => {
       case "licenseeEnrol":  return reply(200, await licenseeEnrol(user, req.ref, req.image));
       case "licenseeSearch": return reply(200, await licenseeSearch(user, req.image));
       case "licenseeRemove": return reply(200, await licenseeRemove(user, req.ref));
-      case "readDocs":       return reply(200, await readDocs(user, req.images, req.names));
       default:               return reply(400, { error: "Unknown action", code: "BAD_ACTION" });
     }
   } catch (err) {

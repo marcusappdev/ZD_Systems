@@ -10,7 +10,7 @@
    the existing one with that serial number), records the previous owner,
    attaches every scan as a document, and can take the holder's photo from
    the card copy on the docket. Optional automatic reading fills the form
-   (switched on with ZD_RULES.AUTO_READ once the AWS side is set up).
+   (aws/zd-reader; switched on with ZD_READ_API and ZD_RULES.AUTO_READ).
    Uses index.html's globals (D, LISTS, enqueue, holder, lic ...).
    ===================================================================== */
 
@@ -499,19 +499,55 @@ async function capSaveBuy(set, form) {
   } finally { const b = $("#capSave"); if (b) b.disabled = false; }
 }
 
-/* ---------- automatic reading (AWS Bedrock, through the face service) ---------- */
-const CAP_FIELDS = ["LicenceNo", "Surname", "GivenNames", "MiddleName", "CompanyName", "Address", "SerialNo", "Make", "Model", "FirearmType", "Calibre", "Capacity",
-  "Purpose", "ExpiryDate", "IssueDate", "PTBNo", "PTBDate", "DeliveredDate", "ReceiptNo", "OfficeOfIssue", "PrevOwner", "PrevLicenceNo", "NODDate"];
+/* ---------- automatic reading (Claude on AWS Bedrock, through the zd-reader stack) ----------
+   The stack is generic: everything about ZD's documents - the fields, what each one means
+   and the instructions - lives here and is sent with the pages. Only the fields the form
+   for this kind of scan actually has are asked for. Nothing is saved until Save is pressed. */
+const CAP_READ = {
+  LicenceNo: "the NEW owner's licence number printed on the licence card copy (digits only, no letters)",
+  HolderKind: "\"Company\" if the new owner is a company, otherwise \"Individual\"",
+  Surname: "new owner's surname", GivenNames: "new owner's first name", MiddleName: "new owner's middle name(s)",
+  CompanyName: "company name, if the owner is a company",
+  Address: "new owner's address as printed on the licence card copy (else the PTB)",
+  SerialNo: "firearm serial number, exactly as printed", Make: "firearm make, e.g. WINCHESTER", Model: "firearm model, e.g. SPA",
+  FirearmType: "type code printed on the card if any (e.g. SG, R, P)", Calibre: "calibre or gauge, e.g. 12G", Capacity: "chamber / magazine capacity, e.g. 5 rds",
+  Purpose: "purpose code letter(s) printed on the card, e.g. B or BEFG",
+  ExpiryDate: "licence expiry date (YYYY-MM-DD)", IssueDate: "licence issue date if shown (YYYY-MM-DD)",
+  PTBNo: "Permit to Buy number", PTBDate: "date the Permit to Buy was issued (YYYY-MM-DD)",
+  DeliveredDate: "date on the Delivery Docket (YYYY-MM-DD)", ReceiptNo: "official receipt number for the fee", OfficeOfIssue: "office where the permit was issued",
+  PrevOwner: "previous owner / seller named on the Notice of Disposal", PrevLicenceNo: "previous owner's licence number on the Notice of Disposal",
+  NODDate: "date of the Notice of Disposal (YYYY-MM-DD)"
+};
+const CAP_FIELDS = Object.keys(CAP_READ);
+const CAP_FORM_NAME = { LicenceNo: "OwnerNo", Purpose: "PurposeCode" };   // read field -> form field, where they differ
+/* The request for one set: { schema, instructions }. `has(name)` says whether the form has that field. */
+function capReadRequest(type, names, has) {
+  const keys = CAP_FIELDS.filter(k => has(CAP_FORM_NAME[k] || k));
+  const props = {};
+  for (const k of keys) props[k] = { type: ["string", "null"], description: CAP_READ[k] };
+  props.unclear = { type: "array", items: { type: "string" }, description: "names of fields that are on the pages but can't be read with confidence" };
+  props.note = { type: ["string", "null"], description: "one short sentence about anything unclear, or null" };
+  const what = type === "NOD" ? "a Notice of Disposal (NOD) recording the sale of ONE firearm - read the firearm and the previous owner (the seller)"
+    : type === "DD" ? "a Delivery Docket, usually with a photocopy of the newly issued licence card, for ONE firearm"
+    : "a Permit to Buy (PTB, often handwritten) and a Delivery Docket (often with a photocopy of the newly issued licence card) for ONE firearm sale";
+  const instructions = `These are scanned Papua New Guinea firearms licensing documents: ${what}.
+File names: ${(names || []).map(String).join(", ").slice(0, 400)}.
+Record the values with the record_fields tool. Use null when a value isn't shown or you can't read it - never guess.
+Prefer the printed licence card for the owner's details. Dates as YYYY-MM-DD. Names in normal capitalisation.`;
+  return { schema: { type: "object", properties: props, required: [...keys, "unclear"] }, instructions };
+}
 async function capAutoRead(set, form) {
   const btn = $("#capRead"); btn.disabled = true; btn.textContent = "Reading…";
   try {
     const images = [];
     for (const f of set.files) for (const cv of await capPages(f)) images.push(cv.toDataURL("image/jpeg", 0.75).split(",")[1]);
-    const r = await faceCall({ action: "readDocs", images: images.slice(0, 6), names: set.files.map(f => f.name) });
-    const got = r.fields || {};
+    const req = capReadRequest(set.type, set.files.map(f => f.name), n => !!form.elements[n]);
+    const r = await readerCall({ format: "jpeg", images: images.slice(0, 6), ...req });
+    const got = r.fields || {}, unclear = Array.isArray(got.unclear) ? got.unclear.map(String).slice(0, 12) : [];
     let n = 0;
     for (const k of CAP_FIELDS) {
       let v = got[k]; if (v == null || v === "") continue;
+      v = String(v).trim().slice(0, 300);
       if (k === "Purpose") {
         if (!form.elements.PurposeCode) continue;
         const codes = purposeCodes(v);
@@ -523,9 +559,9 @@ async function capAutoRead(set, form) {
       el.value = v; el.classList.add("auto"); n++;
     }
     if (got.HolderKind === "Company" && form.elements.HolderKind) { form.querySelector('[name="HolderKind"][value="Company"]').checked = true; form.classList.add("kind-co"); }
-    $("#capMsg").innerHTML = `<span class="tag info">Read automatically</span> ${n} field${n === 1 ? "" : "s"} filled in (shaded) - check each one against the scan before saving.${r.note ? " " + esc(r.note) : ""}`;
+    $("#capMsg").innerHTML = `<span class="tag info">Read automatically</span> ${n} field${n === 1 ? "" : "s"} filled in (shaded) - check each one against the scan before saving.${unclear.length ? " Couldn't read clearly: " + esc(unclear.join(", ")) + "." : ""}${typeof got.note === "string" && got.note ? " " + esc(got.note.slice(0, 300)) : ""}`;
     if (set.type === "NOD") capNodMatch(form); else capRefresh(form);
     markDirty();
-  } catch (e) { toast(isNetErr(e) ? "Automatic reading needs an internet connection" : "Automatic reading failed: " + e.message); }
+  } catch (e) { toast(isNetErr(e) && e.code !== "NO_SERVICE" ? "Automatic reading needs an internet connection" : "Automatic reading failed: " + e.message); }
   finally { btn.disabled = false; btn.textContent = "Read automatically"; }
 }
