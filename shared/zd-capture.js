@@ -45,7 +45,12 @@ function capKindOf(kind) {
 }
 const capDone = f => (D.docs || []).some(d => d.OriginalName === f.name);   // already attached in an earlier session
 
+/* start a fresh batch: the list only lives in this tab - saved scans are already in the sync queue */
+function capClear() { Object.assign(CAP, { files: [], sets: [], i: 0, photo: null, pages: {} }); S.dirty = false; }
+const capAllDone = () => CAP.sets.length > 0 && CAP.sets.every(s => s.done);
+
 function capLoadFiles(fileList) {
+  if (capAllDone()) capClear();          // the last batch is finished: the new files replace it
   const add = [...fileList].filter(f => /\.(pdf|jpe?g|png)$/i.test(f.name) && !CAP.files.some(x => x.name === f.name));
   const keep = Object.fromEntries(CAP.sets.map(s => [s.files[0].name, s]));   // keep what's been done in this session
   CAP.files.push(...add.map(f => ({ name: f.name, file: f, info: capParse(f.name) })));
@@ -94,7 +99,8 @@ function pageCapture() {
   const set = CAP.sets[CAP.i];
   const doneN = CAP.sets.filter(s => s.done).length;
   $("#main").innerHTML = banners() + `<div class="bar"><h2>Back-capture</h2><span class="grow"></span>
-      <label class="btn sm ${CAP.sets.length ? "" : "primary"}" style="margin:0">${CAP.sets.length ? "+ Add more scans" : "Choose scanned files"}<input type="file" id="capFiles" accept=".pdf,image/*" multiple hidden></label></div>
+      ${CAP.sets.length && !capAllDone() ? `<button type="button" class="btn sm" id="capNewBatch" title="Clear this list and start again with other scans">Start new batch</button>` : ""}
+      <label class="btn sm ${!CAP.sets.length || capAllDone() ? "primary" : ""}" style="margin:0">${!CAP.sets.length ? "Choose scanned files" : capAllDone() ? "Choose next batch" : "+ Add more scans"}<input type="file" class="capFiles" accept=".pdf,image/*" multiple hidden></label></div>
     ${!set ? `<div class="card cap-drop" id="capDrop"><p><b>Drop the scanned PDFs here</b>, or click <b>Choose scanned files</b>.</p>
         <p class="small muted">Name them like <span class="mono">20261119-001_PTB_Guo_Shujie.pdf</span> and <span class="mono">20261119-002_NOD_Guo_Shujie.pdf</span>
         - then the document type and names fill in by themselves. Scan the Permit to Buy / Delivery Docket before the Notice of Disposal for the same firearm.
@@ -111,7 +117,13 @@ function pageCapture() {
           <div id="capPage" class="cap-page"><p class="muted" style="color:#fff">Loading the scan…</p></div></div>
         <div class="card cap-side">${set.done ? capSavedHtml(set) : `<form id="capForm" class="cap-form" autocomplete="off">${capFormHtml(set)}</form>`}</div>
       </div>`}`;
-  $("#capFiles").onchange = e => { capLoadFiles(e.target.files); e.target.value = ""; CAP.photo = null; pageCapture(); };
+  $$(".capFiles").forEach(inp => inp.onchange = e => { capLoadFiles(e.target.files); e.target.value = ""; CAP.photo = null; pageCapture(); });
+  if ($("#capNewBatch")) $("#capNewBatch").onclick = async () => {
+    const left = CAP.sets.filter(s => !s.done).length;
+    if (!await ask(`${left} scan${left === 1 ? " hasn't" : "s haven't"} been saved yet. They'll be taken off this list (the files themselves aren't touched) - you can add them again later. Start a new batch?`,
+      { title: "Start new batch", yes: "Start new batch", no: "Keep this batch" })) return;
+    capClear(); pageCapture();
+  };
   const drop = $("#capDrop") || $("#main");
   drop.ondragover = e => { if (hasFiles(e)) e.preventDefault(); };
   drop.ondrop = e => { if (!hasFiles(e)) return; e.preventDefault(); capLoadFiles(e.dataTransfer.files); CAP.photo = null; pageCapture(); };
@@ -170,7 +182,8 @@ function capSavedHtml(set) {
     ${row("Photo", r.photo ? "added from the scan" : "")}
     ${row("Scan", esc(set.files[0].name))}
     <div class="cap-actions">${next >= 0 ? `<button type="button" class="btn primary" id="capNextSet">Next scan: ${esc(capLabel(CAP.sets[next], next))} →</button>`
-      : `<div class="cap-alldone">All ${CAP.sets.length} scans in this batch are done. Use <b>+ Add more scans</b> for the next batch.</div>`}</div>`;
+      : `<div class="cap-alldone">All ${CAP.sets.length} scans in this batch are done.<br><span class="small" style="font-weight:400">The next batch you choose or drop here replaces this list.</span>
+          <label class="btn primary" style="margin:10px 0 0">Choose next batch<input type="file" class="capFiles" accept=".pdf,image/*" multiple hidden></label></div>`}</div>`;
 }
 
 /* ---------- the form: the document type decides the fields ---------- */
