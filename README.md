@@ -21,6 +21,7 @@ Graph, and a small AWS Lambda using Amazon Rekognition for faces.
 | `shared/zd-card.js` | Card drawing and printing (300 dpi, backgrounds always fill the card) |
 | `sw.js` | Lets the app open with no internet |
 | `aws/zd-face-api/` | The face service (AWS Lambda). Not served by GitHub Pages |
+| `aws/zd-reader/` | Back-capture "Read automatically" service: a CloudFormation stack (Lambda + HTTP API, Claude on Amazon Bedrock). Steps in its README |
 | `setup/Setup-ZD-Licensing.ps1` | Creates the SharePoint site, lists, libraries and group |
 | `tests/` | Automatic tests (run on every pull request) |
 
@@ -179,6 +180,16 @@ Expected: `{"error":"Missing sign-in token","code":"UNAUTHORISED"}`. Put the URL
 ```
 curl -sSo index.mjs https://raw.githubusercontent.com/marcusappdev/ZD_Systems/main/aws/zd-face-api/index.mjs && zip -q function.zip index.mjs && aws lambda update-function-code --function-name zd-face-api --zip-file fileb://function.zip --region ap-southeast-2 --query LastUpdateStatus
 ```
+
+## Back-capture: reading the old paper files automatically
+
+The **Back-capture** screen turns the lever-arch files (PTB, Delivery Docket, NOD scans) into
+holders and licences. **Read automatically** sends the pages of one set to Claude on Amazon
+Bedrock (Australian regions, nothing stored) through ZD's own **zd-reader** stack in the
+Concept-RPYC-POC account. It fills the form; the person checks each value and nothing is saved
+until **Save**. The fields and instructions live in the app (`capReadRequest` in
+`shared/zd-capture.js`); the stack is generic. Off until `ZD_READ_API` is set and
+`ZD_RULES.AUTO_READ` is `true` - see [aws/zd-reader/README.md](aws/zd-reader/README.md).
 
 ## Moving to ZD Systems' own SharePoint
 

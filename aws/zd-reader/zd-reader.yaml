@@ -1,0 +1,190 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  ZD Licensing - Back-capture "Read automatically" service. A small Lambda behind an
+  HTTP API that sends the scanned pages of one document set to Claude on Amazon Bedrock
+  (Australia inference profile) and returns the fields it read. Only people signed in to
+  ZD Licensing (Entra ID token for the ZD Licensing app registration) can call it.
+  Pages are not stored. Same pattern as DPM's dpm-reader stack, deployed separately.
+
+Parameters:
+  TenantId:
+    Type: String
+    Default: ea9e105c-2df6-47ef-a8e3-b4aa1d788423
+    Description: Entra tenant ID ZD Licensing signs in to (Concept Group for the POC)
+  ClientId:
+    Type: String
+    Default: 35593863-9ae0-4018-8dcc-a82a44e59c51
+    Description: Application (client) ID of the "ZD Licensing" app registration
+  ModelId:
+    Type: String
+    Default: au.anthropic.claude-haiku-4-5-20251001-v1:0
+    Description: Bedrock inference profile. au. keeps the pages in Australian regions.
+  AllowedOrigin:
+    Type: String
+    Default: https://marcusappdev.github.io
+    Description: The web address ZD Licensing is served from (no trailing slash, no /ZD_Systems)
+
+Resources:
+  ReaderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: InvokeClaudeAU
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource:
+                  - !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*
+                  - arn:aws:bedrock:ap-southeast-2::foundation-model/anthropic.*
+                  - arn:aws:bedrock:ap-southeast-4::foundation-model/anthropic.*
+                  - arn:aws:bedrock:ap-southeast-6::foundation-model/anthropic.*
+
+  ReaderLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-reader
+      RetentionInDays: 14
+
+  ReaderFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: ReaderLogs
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-reader
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 29
+      MemorySize: 512
+      Role: !GetAtt ReaderRole.Arn
+      Environment:
+        Variables:
+          MODEL_ID: !Ref ModelId
+      Code:
+        ZipFile: |
+          # Generic reader: the app sends the page images, a JSON schema and its instructions.
+          # Accepts one page ("image") or a set of up to 6 pages ("images"), all JPEG or PNG.
+          import json, os, base64, boto3
+          from botocore.config import Config
+          br = boto3.client("bedrock-runtime", config=Config(read_timeout=25, retries={"max_attempts": 2, "mode": "standard"}))
+          MODEL = os.environ["MODEL_ID"]
+          SYSTEM = ("You read scanned documents for a records office. Many are handwritten or photocopied. "
+                    "Copy every value exactly as written on the pages - never guess, complete or calculate a value "
+                    "that is not written. Use null for anything blank, missing or unreadable and, if the schema has "
+                    "an 'unclear' list, name such fields there. Dates as YYYY-MM-DD. Numbers, serial numbers and "
+                    "codes keep their letters and leading zeros. Follow the instructions that come with the pages.")
+          MAX_PAGES, MAX_PAGE, MAX_TOTAL = 6, 3_700_000, 4_200_000
+          def reply(code, body):
+              return {"statusCode": code, "headers": {"Content-Type": "application/json"}, "body": json.dumps(body)}
+          def handler(event, context):
+              try:
+                  raw = event.get("body") or "{}"
+                  if event.get("isBase64Encoded"): raw = base64.b64decode(raw)
+                  req = json.loads(raw)
+                  fmt = req.get("format", "jpeg")
+                  pages = req.get("images") or [req["image"]]
+                  if not isinstance(pages, list) or len(pages) > MAX_PAGES:
+                      return reply(400, {"error": f"Send between 1 and {MAX_PAGES} pages"})
+                  imgs = [base64.b64decode(p) for p in pages]
+                  if fmt not in ("jpeg", "png") or max(map(len, imgs)) > MAX_PAGE or sum(map(len, imgs)) > MAX_TOTAL:
+                      return reply(400, {"error": "The pages must be JPEG or PNG, under 3.7 MB each and 4.2 MB together"})
+                  schema = req["schema"]
+                  text = str(req.get("instructions") or "Read these pages.")[:8000]
+                  content = [{"image": {"format": fmt, "source": {"bytes": b}}} for b in imgs] + [{"text": text}]
+                  res = br.converse(
+                      modelId=MODEL,
+                      system=[{"text": SYSTEM}],
+                      messages=[{"role": "user", "content": content}],
+                      toolConfig={"tools": [{"toolSpec": {"name": "record_fields",
+                                  "description": "Record the values read from the pages",
+                                  "inputSchema": {"json": schema}}}],
+                                  "toolChoice": {"tool": {"name": "record_fields"}}},
+                      inferenceConfig={"maxTokens": 3000, "temperature": 0})
+                  fields = next((c["toolUse"]["input"] for c in res["output"]["message"]["content"] if "toolUse" in c), None)
+                  u = res.get("usage", {})
+                  who = (((event.get("requestContext") or {}).get("authorizer") or {}).get("jwt") or {}).get("claims", {}).get("preferred_username")
+                  print(json.dumps({"read": True, "by": who, "pages": len(imgs), "in": u.get("inputTokens"), "out": u.get("outputTokens")}))
+                  return reply(200, {"fields": fields, "model": MODEL,
+                                     "usage": {"input": u.get("inputTokens"), "output": u.get("outputTokens")}})
+              except KeyError as e:
+                  return reply(400, {"error": f"missing {e}"})
+              except Exception as e:
+                  name = type(e).__name__
+                  code = ((getattr(e, "response", None) or {}).get("Error") or {}).get("Code", "")
+                  print("ERROR", name, code, str(e)[:500])
+                  if code in ("ThrottlingException", "ServiceQuotaExceededException", "TooManyRequestsException"):
+                      return reply(429, {"error": "The reading service is busy - wait a moment and try again", "code": "BUSY"})
+                  return reply(500, {"error": f"{code or name}: {str(e)[:300]}"})
+
+  ReaderApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub ${AWS::StackName}-api
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: [ !Ref AllowedOrigin ]
+        AllowMethods: [ POST, OPTIONS ]
+        AllowHeaders: [ authorization, content-type ]
+        MaxAge: 3600
+
+  ReaderAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref ReaderApi
+      Name: EntraIdToken
+      AuthorizerType: JWT
+      IdentitySource: [ $request.header.Authorization ]
+      JwtConfiguration:
+        Audience: [ !Ref ClientId ]
+        Issuer: !Sub https://login.microsoftonline.com/${TenantId}/v2.0
+
+  ReaderIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ReaderApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt ReaderFunction.Arn
+      PayloadFormatVersion: "2.0"
+      TimeoutInMillis: 30000
+
+  ReaderRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ReaderApi
+      RouteKey: POST /read
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ReaderAuthorizer
+      Target: !Sub integrations/${ReaderIntegration}
+
+  # Bedrock's Haiku 4.5 limit (50 requests a minute) is shared with DPM, so ZD is
+  # kept to about one set a second. Operators read one set at a time anyway.
+  ReaderStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref ReaderApi
+      StageName: $default
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 3
+        ThrottlingRateLimit: 1
+
+  ReaderPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ReaderFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ReaderApi}/*/*/read
+
+Outputs:
+  ReadUrl:
+    Description: Put this in ZD_READ_API in shared/zd-config.js
+    Value: !Sub https://${ReaderApi}.execute-api.${AWS::Region}.amazonaws.com/read

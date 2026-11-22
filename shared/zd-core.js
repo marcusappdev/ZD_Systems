@@ -346,6 +346,29 @@ async function faceCall(body) {
   if (!res.ok) { const err = new Error(data.error || `Face service error (${res.status})`); err.code = data.code; err.status = res.status; throw err; }
   return data;
 }
+/* Back-capture reading service (aws/zd-reader). Same sign-in proof as the face service:
+   the ID token, which the stack's JWT check accepts only from the ZD Licensing app. */
+const READ_API = DEMO ? "" : String(typeof ZD_READ_API === "string" ? ZD_READ_API : "").trim();
+async function readerCall(body) {
+  if (DEMO) {
+    if (!online()) { const e = new Error("offline"); e.kind = "offline"; throw e; }
+    await new Promise(r => setTimeout(r, 400));
+    return { fields: { Make: "DEMO MAKE", Calibre: "12G", Capacity: "5 rds", note: "Demo mode - sample values only, nothing was read." } };
+  }
+  if (!READ_API) throw Object.assign(new Error("The reading service isn't set up (ZD_READ_API in zd-config.js)."), { code: "NO_SERVICE" });
+  if (!online()) { const e = new Error("offline"); e.kind = "offline"; throw e; }
+  let res;
+  try {
+    res = await fetch(READ_API, { method: "POST", headers: { Authorization: "Bearer " + await idToken(), "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  } catch (e) { const err = new Error("Couldn't reach the reading service - check the internet connection."); err.kind = "offline"; throw err; }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = res.status === 401 ? "the reading service didn't accept your sign-in" : res.status === 429 ? "the reading service is busy - wait a moment and try again"
+      : data.error || data.message || `reading service error (${res.status})`;
+    const err = new Error(msg); err.code = data.code; err.status = res.status; throw err;
+  }
+  return data;
+}
 /* DEMO: pretend face service. Remembers who "enrolled" in this browser. */
 async function demoFace(b) {
   if (!online()) { const e = new Error("offline"); e.kind = "offline"; throw e; }
@@ -360,7 +383,6 @@ async function demoFace(b) {
     case "licenseeEnrol": { const id = "demo-" + b.ref; if (!lic.includes(b.ref)) lic.push(b.ref); await kvSet("demoface:licensees", lic); return { faceId: id, duplicates: [] }; }
     case "licenseeSearch": return { matches: lic.slice(-1).map(ref => ({ ref, similarity: 97.4 })) };
     case "licenseeRemove": await kvSet("demoface:licensees", lic.filter(r => r !== b.ref)); return { removed: 1 };
-    case "readDocs": return { fields: { Make: "DEMO MAKE", Calibre: "12G", Capacity: "5 rds" }, note: "Demo mode - sample values only, nothing was read." };
   }
   return {};
 }

@@ -25,6 +25,11 @@ const ZD_TENANT = {
    sign-in is mandatory. */
 const ZD_FACE_API = "https://fffkbkm4phzo7ivupypwqq4xbq0razio.lambda-url.ap-southeast-2.on.aws/";   // zd-face-api (Concept-RPYC-POC account, Sydney)
 
+/* Back-capture "Read automatically" service (aws/zd-reader, CloudFormation stack
+   "zd-reader"). Paste the stack's ReadUrl output here, then set ZD_RULES.AUTO_READ
+   to true. "" = not set up. This is ZD's own stack - never DPM's dpm-reader address. */
+const ZD_READ_API = "";
+
 /* =====================================================================
    Branding and names
      COMPANY      - shown on the sign-in page and printouts
@@ -96,8 +101,9 @@ const ZD_CHOICES = {
                            may keep working offline. 0 = never work offline.
      LICENCE_YEARS       - default expiry = issue date + this many years
      AUTO_READ           - Back-capture "Read automatically" button (reads the
-                           scans with AWS Bedrock through zd-face-api). Leave
-                           false until the AWS side is set up and approved.
+                           scans with Claude on AWS Bedrock through the zd-reader
+                           stack, ZD_READ_API above). Leave false until that is
+                           set up and approved.
    ===================================================================== */
 const ZD_RULES = {
   FACE_RECHECK_HOURS:  12,
