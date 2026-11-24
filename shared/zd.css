@@ -263,6 +263,7 @@ details.purchase[open]>summary{margin-bottom:10px}
 .cap-status .chk{color:var(--text);font-weight:600}
 .cap-form .cap-co{display:none}.cap-form.kind-co .cap-co{display:block}
 .cap-form.owner-known .cap-newowner{display:none}
+.cap-form .cap-ltc{display:none}.cap-form.has-ltc .cap-ltc{display:block;margin-top:6px}
 .cap-photorow{display:flex;gap:10px;align-items:center}
 .cap-photo img,.cap-photo .nophoto{width:60px;height:80px;object-fit:cover;border-radius:6px;background:var(--grey-bg);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px}
 .cap-file{border-top:1px solid var(--line);padding:8px 0}.cap-file .chk{display:inline-flex;margin-right:14px}
