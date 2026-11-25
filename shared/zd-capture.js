@@ -96,6 +96,7 @@ async function capPages(f) {
    One scan at a time. Top: progress. Left: choose what the scan is, then the fields that
    kind of document needs (or a green "Saved" summary once it's done). Right: the scan. */
 function pageCapture() {
+  scrubFields();                                        // redrawn (other scan, other document type): no browser "save licence?" offer
   const set = CAP.sets[CAP.i];
   const doneN = CAP.sets.filter(s => s.done).length;
   $("#main").innerHTML = banners() + `<div class="bar"><h2>Back-capture</h2><span class="grow"></span>
