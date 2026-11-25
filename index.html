@@ -456,6 +456,14 @@ window.addEventListener("offline", () => { renderWho(); });
 
 /* Something on the page has changed: "Save changes" appears only now */
 function markDirty() { S.dirty = true; const b = $("#saveBtn"); if (b) b.hidden = false; }
+/* Edge and Chrome treat a form that disappears with values still in it as "submitted", and then
+   offer to save a "driver's licence" (the Licence no boxes) or an address. Emptying the boxes just
+   before the page is redrawn leaves the browser nothing to offer. Unsaved work is asked about
+   before this point; a quiet refresh restores what was typed from the copy taken first. */
+function scrubFields() {
+  document.querySelectorAll("#main input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=button]):not([type=submit]), #main textarea")
+    .forEach(el => { el.value = ""; });
+}
 function route(quiet) {
   const parts = location.hash.replace(/^#\/?/, "").split("/");
   const next = parts[0] || "";
@@ -470,6 +478,9 @@ function route(quiet) {
   // A quiet refresh of the same licence keeps whatever was typed but not saved yet
   const keep = quiet && next === S.route && param === S.param && S.dirty && $("#mainForm")
     ? [...new FormData($("#mainForm"))] : null;
+  // Back-capture: a background sync finishing mustn't redraw the scan the operator is typing up
+  if (quiet && next === "capture" && S.route === "capture" && S.dirty) return;
+  scrubFields();                                        // before the page is redrawn: see scrubFields
   if (!quiet || next !== S.route || param !== S.param) S.dirty = false;
   S.route = next; S.param = param; S.sub = decodeURIComponent(parts[2] || ""); S.paste = null;
   if (keep) setTimeout(() => {
@@ -2015,6 +2026,6 @@ async function openSyncPanel() {
   });
 }
 </script>
-<script src="shared/zd-capture.js?v=20261125"></script>
+<script src="shared/zd-capture.js?v=20261125b"></script>
 </body>
 </html>
