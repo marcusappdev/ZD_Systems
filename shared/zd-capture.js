@@ -14,7 +14,7 @@
    Uses index.html's globals (D, LISTS, enqueue, holder, lic ...).
    ===================================================================== */
 
-const CAP = { files: [], sets: [], i: 0, photo: null, pages: {} };
+const CAP = { files: [], sets: [], i: 0, photo: null, carrierPhoto: null, pages: {} };
 /* The kinds of scan. The kind decides the fields: a purchase (PTB / Delivery Docket, with the
    card copy) creates the holder and licence; a Notice of Disposal only finds the firearm by serial. */
 const CAP_KINDS = {
@@ -117,7 +117,7 @@ function pageCapture() {
           <div id="capPage" class="cap-page"><p class="muted" style="color:#fff">Loading the scan…</p></div></div>
         <div class="card cap-side">${set.done ? capSavedHtml(set) : `<form id="capForm" class="cap-form" autocomplete="off">${capFormHtml(set)}</form>`}</div>
       </div>`}`;
-  $$(".capFiles").forEach(inp => inp.onchange = e => { capLoadFiles(e.target.files); e.target.value = ""; CAP.photo = null; pageCapture(); });
+  $$(".capFiles").forEach(inp => inp.onchange = e => { capLoadFiles(e.target.files); e.target.value = ""; CAP.photo = null; CAP.carrierPhoto = null; pageCapture(); });
   if ($("#capNewBatch")) $("#capNewBatch").onclick = async () => {
     const left = CAP.sets.filter(s => !s.done).length;
     if (!await ask(`${left} scan${left === 1 ? " hasn't" : "s haven't"} been saved yet. They'll be taken off this list (the files themselves aren't touched) - you can add them again later. Start a new batch?`,
@@ -126,17 +126,12 @@ function pageCapture() {
   };
   const drop = $("#capDrop") || $("#main");
   drop.ondragover = e => { if (hasFiles(e)) e.preventDefault(); };
-  drop.ondrop = e => { if (!hasFiles(e)) return; e.preventDefault(); capLoadFiles(e.dataTransfer.files); CAP.photo = null; pageCapture(); };
+  drop.ondrop = e => { if (!hasFiles(e)) return; e.preventDefault(); capLoadFiles(e.dataTransfer.files); CAP.photo = null; CAP.carrierPhoto = null; pageCapture(); };
   if (!set) return;
   $$("[data-set]").forEach(b => b.onclick = () => capGo(+b.dataset.set));
   $(".cap-chip.cur")?.scrollIntoView({ block: "nearest", inline: "center" });
   $("#capZoom").onclick = () => $("#capPage").classList.toggle("zoomed");
-  if ($("#capPhoto")) $("#capPhoto").onclick = async () => {
-    const cv = (await capPages(set.files[0]))[0];
-    const blob = await new Promise(r => cv.toBlob(r, "image/jpeg", 0.92));
-    const out = await openCrop(blob, { maxZoom: 14 });
-    if (out && out !== "retake") { CAP.photo = out; capShowPhoto(); markDirty(); }
-  };
+  if ($("#capPhoto")) $("#capPhoto").onclick = () => capCutPhoto(set, "photo");
   if (set.done) { $("#capNextSet")?.addEventListener("click", () => capGo(capNextTodo())); $("#capNextSet")?.focus(); }
   else capWireForm(set);
   capShow(set);
@@ -145,7 +140,7 @@ const capNextTodo = () => { const n = CAP.sets.findIndex((s, i) => i > CAP.i && 
 function capGo(i) {
   if (i < 0 || i >= CAP.sets.length) return;
   if (S.dirty) return ask("This scan hasn't been saved. Leave it without saving?", { title: "Not saved", yes: "Leave it", no: "Stay" }).then(ok => { if (ok) { S.dirty = false; capGo(i); } });
-  CAP.i = i; CAP.photo = null; S.dirty = false; pageCapture(); window.scrollTo(0, 0);
+  CAP.i = i; CAP.photo = null; CAP.carrierPhoto = null; S.dirty = false; pageCapture(); window.scrollTo(0, 0);
 }
 async function capShow(set) {
   const f = set.files[0];
@@ -155,9 +150,18 @@ async function capShow(set) {
     box.innerHTML = ""; pages.forEach(cv => { const img = document.createElement("img"); img.src = cv.toDataURL("image/jpeg", 0.85); box.appendChild(img); });
   } catch (e) { $("#capPage").innerHTML = `<p style="color:#fff">This scan couldn't be shown: ${esc(e.message)}</p>`; }
 }
+/* cut a photo from the card copy on the scan: the owner's ("photo") or the carrier's ("carrierPhoto") */
+async function capCutPhoto(set, which) {
+  const cv = (await capPages(set.files[0]))[0];
+  const blob = await new Promise(r => cv.toBlob(r, "image/jpeg", 0.92));
+  const out = await openCrop(blob, { maxZoom: 14 });
+  if (out && out !== "retake") { CAP[which] = out; capShowPhoto(); markDirty(); }
+}
 function capShowPhoto() {
-  const slot = $("#capPhotoSlot"); if (!slot) return;
-  slot.innerHTML = CAP.photo ? `<img src="${URL.createObjectURL(CAP.photo)}" alt="">` : `<div class="nophoto small">No photo</div>`;
+  for (const [id, b] of [["#capPhotoSlot", CAP.photo], ["#capCarrierPhotoSlot", CAP.carrierPhoto]]) {
+    const slot = $(id); if (slot) slot.innerHTML = b ? `<img src="${URL.createObjectURL(b)}" alt="">` : `<div class="nophoto small">No photo</div>`;
+  }
+  const same = $("#capCarrierSame"); if (same) same.hidden = !CAP.photo;
 }
 
 /* ---------- a saved scan: what was done, and the way on ---------- */
@@ -177,6 +181,7 @@ function capSavedHtml(set) {
     ${row("Holder", h ? `<a href="#/holder/${encodeURIComponent(h.ClientRef)}" target="_blank">${esc(fullName(h))}</a>${tag(r.newHolder, "already in register")}` : "")}
     ${row("Licence", l ? `<a href="#/licence/${encodeURIComponent(l.ClientRef)}" target="_blank">${esc(l.Title)}</a>${tag(r.newLicence, r.nod ? "NOD attached" : "already in register - scan added")}` : "")}
     ${row("Firearm", l ? esc(gunText(l)) : "")}
+    ${(() => { const c = r.ltcRef && lic_(r.ltcRef); return row("Licence to carry", c ? `<a href="#/licence/${encodeURIComponent(c.ClientRef)}" target="_blank">${esc(c.Title)}</a> · ${esc(carrierName(c))}${tag(r.newLtc, "already in register")}` : ""); })()}
     ${row("Seller", l?.PrevOwner ? esc(l.PrevOwner) + (l.PrevLicenceNo ? " (" + esc(l.PrevLicenceNo) + ")" : "") : "")}
     ${row("Transfer", r.transfer ? `licence ${esc(r.transfer)} marked Cancelled` : "")}
     ${row("Photo", r.photo ? "added from the scan" : "")}
@@ -237,11 +242,27 @@ function capBuyHtml(set) {
     ${purposePicker("", "")}
     <div class="grid2"><label>Expires *<input type="date" name="ExpiryDate"></label><label>Issued<input type="date" name="IssueDate"></label></div>
 
-    ${set.type === "PTB" ? `${step(4, "Permit to Buy and Delivery Docket")}
+    ${step(4, "Licence to carry - a second card (LC …) on the docket")}
+    <label class="chk"><input type="checkbox" name="HasLTC" value="1"> <span>There's also a <b>licence to carry</b> card for this firearm</span></label>
+    <div class="cap-ltc">
+      <p class="small muted" style="margin:4px 0 8px">Usually with a company firearm: the LC card shows the person who carries it and <b>their own</b> licence number. The firearm, purpose and dates come from the licence above.</p>
+      <div class="grid2"><label>Carrier's licence no *<div class="pfx"><span>LC</span><input type="text" name="CarrierNo" class="mono" placeholder="e.g. 100300"></div></label>
+        <label>Expires (LC card)<input type="date" name="CarrierExpiryDate"></label></div>
+      <div class="cap-status" id="capCarrier"></div>
+      <div class="grid3"><label>First name *<input type="text" name="CarrierGivenNames"></label>
+        <label>Middle name<input type="text" name="CarrierMiddleName"></label>
+        <label>Surname *<input type="text" name="CarrierSurname"></label></div>
+      <label>Address (as on the LC card)<input type="text" name="CarrierAddress"></label>
+      <div class="cap-photorow"><div id="capCarrierPhotoSlot" class="cap-photo"></div>
+        <button type="button" class="btn sm" id="capCarrierCut">Carrier's photo from scan</button>
+        <button type="button" class="btn sm" id="capCarrierSame" title="The carrier is the same person as on the owner's card">Same as owner's photo</button></div>
+    </div>
+
+    ${set.type === "PTB" ? `${step(5, "Permit to Buy and Delivery Docket")}
     <div class="grid3"><label>PTB no<input type="text" name="PTBNo" class="mono"></label><label>PTB dated<input type="date" name="PTBDate"></label>
       <label>Delivered<input type="date" name="DeliveredDate"></label></div>
     <div class="grid2"><label>Receipt no<input type="text" name="ReceiptNo" class="mono"></label><label>Office of issue<input type="text" name="OfficeOfIssue"></label></div>`
-    : `${step(4, "Delivery Docket")}<label style="max-width:240px">Delivered<input type="date" name="DeliveredDate"></label>`}`;
+    : `${step(5, "Delivery Docket")}<label style="max-width:240px">Delivered<input type="date" name="DeliveredDate"></label>`}`;
 }
 
 /* Notice of Disposal: only finds the firearm by serial no and records the seller */
@@ -306,6 +327,10 @@ function capWireForm(set) {
     capRefresh(form);
   });
   form.elements.SerialNo.addEventListener("input", () => capRefresh(form));
+  form.elements.HasLTC.onchange = () => capRefresh(form);
+  form.elements.CarrierNo.addEventListener("input", () => capRefresh(form));
+  $("#capCarrierCut").onclick = () => capCutPhoto(set, "carrierPhoto");
+  $("#capCarrierSame").onclick = () => { CAP.carrierPhoto = CAP.photo; capShowPhoto(); markDirty(); };
   form.elements.ExpiryDate.addEventListener("change", () => {   // one-year licences: issued = expiry less a year, when blank
     const e = form.elements.ExpiryDate.value, i = form.elements.IssueDate;
     if (e && !i.value) { const d = new Date(e); d.setFullYear(d.getFullYear() - RULES.LICENCE_YEARS); d.setDate(d.getDate() + 1); i.value = ymd(d); }
@@ -314,7 +339,31 @@ function capWireForm(set) {
 }
 
 /* keeps the status boxes and the footer telling the operator exactly what Save will do */
-function capRefresh(form) { capWho(form); capCheckSerial(form); capFoot(form); }
+function capRefresh(form) { capWho(form); capCheckSerial(form); capCarrier(form); capFoot(form); }
+
+/* the licence to carry on the docket: whose number it is, and whether it's already recorded */
+function capCarrierHolder(form) {
+  const n = cleanNo(form.elements.CarrierNo?.value || "");
+  return n ? D.holders.find(x => cleanNo(x.LicenceNo) === n) || null : null;
+}
+function capCarrier(form) {
+  const on = !!form.elements.HasLTC?.checked, box = $("#capCarrier");
+  form.classList.toggle("has-ltc", on);
+  if (!on || !box) return;
+  const n = cleanNo(form.elements.CarrierNo.value), p = capCarrierHolder(form), owner = capOwner(form);
+  const ownerNo = cleanNo(owner?.LicenceNo || form.elements.OwnerNo.value);
+  const gun = owner && capSameSerial(form.elements.SerialNo.value).find(x => x.HolderRef === owner.ClientRef);
+  const dup = gun && n && ltcsOf(gun).find(x => cleanNo(x.Title) === n);
+  if (!n) { box.className = "cap-status"; box.innerHTML = "Type the number from the LC card, without the letters LC."; }
+  else if (n === ownerNo) { box.className = "cap-status warn"; box.innerHTML = `<b>That's the owner's number.</b> The LC card has the carrier's own number (e.g. LC 100300 next to C 100200).`; }
+  else if (dup) { box.className = "cap-status info"; box.innerHTML = `<b>Already recorded:</b> ${esc(dup.Title)} for ${esc(carrierName(dup))} on this firearm. Nothing new is created for it.`; }
+  else if (p) {
+    box.className = "cap-status info";
+    box.innerHTML = `<b>${esc(fullName(p))}</b> has licence no ${esc(n)} in the register - the licence to carry is linked to their record.`;
+    const set = (k, v) => { const el = form.elements[k]; if (el && !el.value.trim() && v) el.value = v; };
+    set("CarrierGivenNames", p.GivenNames); set("CarrierMiddleName", p.MiddleName); set("CarrierSurname", p.Surname); set("CarrierAddress", p.Address);
+  } else { box.className = "cap-status ok"; box.innerHTML = `<b>New licence to carry</b> - LC ${esc(n)}. Fill in the carrier's details from the LC card.`; }
+}
 
 function capWho(form) {
   const box = $("#capWho"), p = capOwner(form), n = cleanNo(form.elements.OwnerNo.value);
@@ -334,7 +383,7 @@ function capCheckSerial(form) {
   const box = $("#capSn"), sn = form.elements.SerialNo.value.trim(), owner = capOwner(form), same = capSameSerial(sn);
   const mine = owner && same.find(x => x.HolderRef === owner.ClientRef), other = !mine && same.find(x => !owner || x.HolderRef !== owner.ClientRef);
   const wasTick = form.elements.Transfer ? form.elements.Transfer.checked : true;
-  form.elements.PrevOwner.value = ""; form.elements.PrevLicenceNo.value = "";
+  if (form.elements.PrevOwner.dataset.src === "serial") { form.elements.PrevOwner.value = ""; form.elements.PrevLicenceNo.value = ""; form.elements.PrevOwner.dataset.src = ""; }
   if (!sn) { box.className = "cap-status"; box.innerHTML = "Type the serial number exactly as on the card."; }
   else if (mine) {
     box.className = "cap-status info";
@@ -345,7 +394,7 @@ function capCheckSerial(form) {
     box.innerHTML = `<b>Registered to ${esc(fullName(ph))}</b> on licence <b>${esc(other.Title)}</b>.
       <label class="chk" style="margin-top:6px"><input type="checkbox" name="Transfer" value="${esc(other.ClientRef)}" ${wasTick ? "checked" : ""}> This is a transfer: cancel licence ${esc(other.Title)} - sold to the new owner</label>`;
     box.querySelector("[name=Transfer]").onchange = () => capFoot(form);
-    form.elements.PrevOwner.value = fullName(ph); form.elements.PrevLicenceNo.value = other.Title;
+    form.elements.PrevOwner.value = fullName(ph); form.elements.PrevLicenceNo.value = other.Title; form.elements.PrevOwner.dataset.src = "serial";
   } else { box.className = "cap-status ok"; box.innerHTML = `<b>New firearm</b> - this serial isn't in the register. A new licence will be created.`; }
   return { mine, other };
 }
@@ -397,6 +446,8 @@ function capFoot(form) {
       parts.push(m ? "add the scan to " + m.Title : "new licence");
       if (!m && same.length && form.elements.Transfer?.checked) parts.push("cancel " + same[0].Title);
     }
+    const cn = form.elements.HasLTC?.checked && cleanNo(form.elements.CarrierNo.value);
+    if (cn) parts.push("licence to carry LC " + cn);
   }
   el.textContent = parts.length ? "Save will: " + parts.join(" · ") : "";
 }
@@ -452,6 +503,13 @@ async function capSaveBuy(set, form) {
   const missing = need.filter(([k]) => !f[k]).map(x => x[1]);
   if (missing.length) return toast("Please fill in: " + missing.join(", "));
   if (!f.Purpose) return toast("Tick at least one purpose");
+  const carry = f.HasLTC ? { no: cleanNo(f.CarrierNo), p: capCarrierHolder(form) } : null;
+  if (carry) {
+    const miss = [[carry.no, "Carrier's licence no"], [f.CarrierGivenNames || carry.p?.GivenNames, "Carrier's first name"], [f.CarrierSurname || carry.p?.Surname, "Carrier's surname"]]
+      .filter(([v]) => !v).map(x => x[1]);
+    if (miss.length) return toast("Licence to carry - please fill in: " + miss.join(", ") + " (or untick it)");
+    if (carry.no === f.LicenceNo) return toast(`LC ${carry.no} is the owner's own number. Type the number from the LC card.`);
+  }
 
   let h = owner, newHolder = false;
   if (h && cleanNo(h.LicenceNo) && cleanNo(h.LicenceNo) !== f.LicenceNo)
@@ -507,9 +565,29 @@ async function capSaveBuy(set, form) {
       l = lic(ref); newLicence = true; logActivity("Licence created (back-capture)", h, l, `SN ${lf.SerialNo}`);
     }
     if (transfer) await capCancel(transfer, h, l, f.PTBDate || f.DeliveredDate);
+    const ltc = carry ? await capSaveLtc(set, f, carry, h, l) : null;
     await capAttach(set, h, l, CAP_KINDS[set.type].docTypes, f.PTBDate || f.DeliveredDate);
-    capFinish(set, form, { holderRef: h.ClientRef, licRef: l.ClientRef, newHolder, newLicence, transfer: transfer?.Title, photo });
+    capFinish(set, form, { holderRef: h.ClientRef, licRef: l.ClientRef, newHolder, newLicence, transfer: transfer?.Title, photo, ltcRef: ltc?.ref, newLtc: ltc?.isNew });
   } finally { const b = $("#capSave"); if (b) b.disabled = false; }
+}
+
+/* the licence to carry from the docket: numbered LC + the carrier's own number, tied to the firearm's
+   licence (CarryForRef), which it copies the firearm, purpose and dates from - as on the licence screen */
+async function capSaveLtc(set, f, carry, h, l) {
+  const dup = ltcsOf(l).find(x => cleanNo(x.Title) === carry.no);
+  if (dup) return { ref: dup.ClientRef, isNew: false };
+  const p = carry.p, ref = newRef();
+  const lf = { Title: withPfx("LC", carry.no), LicenceType: "LTC", HolderRef: h.ClientRef, CarryForRef: l.ClientRef, CarrierRef: p?.ClientRef || "",
+    CarrierGivenNames: f.CarrierGivenNames || p?.GivenNames || "", CarrierMiddleName: f.CarrierMiddleName || p?.MiddleName || "", CarrierSurname: f.CarrierSurname || p?.Surname || "",
+    CarrierSex: p?.Sex || "", CarrierPhone: p?.Phone || "", CarrierAddress: f.CarrierAddress || p?.Address || "",
+    SerialNo: l.SerialNo || "", Make: l.Make || "", Model: l.Model || "", FirearmType: l.FirearmType || "", Calibre: l.Calibre || "", Class: l.Class || "",
+    Purpose: l.Purpose || f.Purpose, IssueDate: l.IssueDate || f.IssueDate, ExpiryDate: f.CarrierExpiryDate || l.ExpiryDate || f.ExpiryDate,
+    LicenceStatus: "Active", Notes: "Back-captured", SourceFile: set.files[0].name };
+  mergeLocal(LISTS.licences, ref, lf);
+  await enqueue({ kind: "upsert", list: LISTS.licences, ref, fields: lf, label: `Back-capture · licence to carry ${lf.Title} · SN ${lf.SerialNo}` });
+  logActivity("Licence to carry created (back-capture)", h, lic(ref), carrierName(lf));
+  if (CAP.carrierPhoto) { await queuePhoto(lic(ref), CAP.carrierPhoto, false, LISTS.licences); CAP.carrierPhoto = null; }
+  return { ref, isNew: true };
 }
 
 /* ---------- automatic reading (Claude on AWS Bedrock, through the zd-reader stack) ----------
@@ -517,11 +595,12 @@ async function capSaveBuy(set, form) {
    and the instructions - lives here and is sent with the pages. Only the fields the form
    for this kind of scan actually has are asked for. Nothing is saved until Save is pressed. */
 const CAP_READ = {
-  LicenceNo: "the NEW owner's licence number printed on the licence card copy (digits only, no letters)",
-  HolderKind: "\"Company\" if the new owner is a company, otherwise \"Individual\"",
-  Surname: "new owner's surname", GivenNames: "new owner's first name", MiddleName: "new owner's middle name(s)",
-  CompanyName: "company name, if the owner is a company",
-  Address: "new owner's address as printed on the licence card copy (else the PTB)",
+  LicenceNo: "Lic No on the OWNER's licence card copy, exactly as printed including a C prefix if it has one (e.g. 123456 or C 100200). Never the number on an LC card",
+  HolderKind: "\"Company\" if the owner's card number starts with C (or the PTB names a company), otherwise \"Individual\"",
+  Surname: "owner's surname - an individual only; null for a company card", GivenNames: "owner's first name - an individual only; null for a company card",
+  MiddleName: "owner's middle name(s) - an individual only",
+  CompanyName: "company name, if the owner is a company. On a C card it is split across the First Name / Last Name boxes (e.g. ACME + TRADING LTD): join it, and prefer the full name on the PTB",
+  Address: "owner's address as printed on the owner's card copy (else the PTB)",
   SerialNo: "firearm serial number, exactly as printed", Make: "firearm make, e.g. WINCHESTER", Model: "firearm model, e.g. SPA",
   FirearmType: "type code printed on the card if any (e.g. SG, R, P)", Calibre: "calibre or gauge, e.g. 12G", Capacity: "chamber / magazine capacity, e.g. 5 rds",
   Purpose: "purpose code letter(s) printed on the card, e.g. B or BEFG",
@@ -529,15 +608,19 @@ const CAP_READ = {
   PTBNo: "Permit to Buy number", PTBDate: "date the Permit to Buy was issued (YYYY-MM-DD)",
   DeliveredDate: "date on the Delivery Docket (YYYY-MM-DD)", ReceiptNo: "official receipt number for the fee", OfficeOfIssue: "office where the permit was issued",
   PrevOwner: "previous owner / seller named on the Notice of Disposal", PrevLicenceNo: "previous owner's licence number on the Notice of Disposal",
-  NODDate: "date of the Notice of Disposal (YYYY-MM-DD)"
+  NODDate: "date of the Notice of Disposal (YYYY-MM-DD)",
+  HasLTC: "true if a second card copy with an LC number (licence to carry, e.g. LC 100300) is on the pages, otherwise false",
+  CarrierNo: "the LC card's Lic No without the letters LC (e.g. 100300)", CarrierGivenNames: "first name on the LC card", CarrierMiddleName: "middle name(s) on the LC card",
+  CarrierSurname: "last name on the LC card", CarrierAddress: "address on the LC card", CarrierExpiryDate: "expiry date on the LC card (YYYY-MM-DD)"
 };
+const CAP_BOOL = new Set(["HasLTC"]);
 const CAP_FIELDS = Object.keys(CAP_READ);
 const CAP_FORM_NAME = { LicenceNo: "OwnerNo", Purpose: "PurposeCode" };   // read field -> form field, where they differ
 /* The request for one set: { schema, instructions }. `has(name)` says whether the form has that field. */
 function capReadRequest(type, names, has) {
   const keys = CAP_FIELDS.filter(k => has(CAP_FORM_NAME[k] || k));
   const props = {};
-  for (const k of keys) props[k] = { type: ["string", "null"], description: CAP_READ[k] };
+  for (const k of keys) props[k] = { type: CAP_BOOL.has(k) ? ["boolean", "null"] : ["string", "null"], description: CAP_READ[k] };
   props.unclear = { type: "array", items: { type: "string" }, description: "names of fields that are on the pages but can't be read with confidence" };
   props.note = { type: ["string", "null"], description: "one short sentence about anything unclear, or null" };
   const what = type === "NOD" ? "a Notice of Disposal (NOD) recording the sale of ONE firearm - read the firearm and the previous owner (the seller)"
@@ -546,7 +629,11 @@ function capReadRequest(type, names, has) {
   const instructions = `These are scanned Papua New Guinea firearms licensing documents: ${what}.
 File names: ${(names || []).map(String).join(", ").slice(0, 400)}.
 Record the values with the record_fields tool. Use null when a value isn't shown or you can't read it - never guess.
-Prefer the printed licence card for the owner's details. Dates as YYYY-MM-DD. Names in normal capitalisation.`;
+Prefer the printed licence card for the owner's details. Dates as YYYY-MM-DD. Names in normal capitalisation.${type === "NOD" ? "" : `
+The Delivery Docket can show one or two PNG Firearm Licence card copies for the same firearm (same serial number):
+- the OWNER's card: Lic No with no letters (an individual) or with a C prefix (a company firearm). This one gives LicenceNo and the owner.
+- a LICENCE TO CARRY card: Lic No with an LC prefix. It names the person who carries the firearm and their own number. Put it ONLY in the Carrier fields and set HasLTC true.
+A page may also include a Notice of Disposal: the seller there is PrevOwner / PrevLicenceNo.`}`;
   return { schema: { type: "object", properties: props, required: [...keys, "unclear"] }, instructions };
 }
 async function capAutoRead(set, form) {
@@ -558,7 +645,14 @@ async function capAutoRead(set, form) {
     const r = await readerCall({ format: "jpeg", images: images.slice(0, 6), ...req });
     const got = r.fields || {}, unclear = Array.isArray(got.unclear) ? got.unclear.map(String).slice(0, 12) : [];
     let n = 0;
+    const owner = String(got.LicenceNo || "").trim();
+    if (/^LC\s*\d/i.test(owner)) { if (!got.CarrierNo) { got.CarrierNo = owner; got.HasLTC = true; } delete got.LicenceNo; }   // an LC number is never the owner's
+    else if (/^C\s*\d/i.test(owner)) got.HolderKind = "Company";
+    if (got.HasLTC === true || /^(true|yes)$/i.test(String(got.HasLTC)) || (got.CarrierNo && got.HasLTC == null)) {
+      if (form.elements.HasLTC && !form.elements.HasLTC.checked) { form.elements.HasLTC.checked = true; n++; }
+    }
     for (const k of CAP_FIELDS) {
+      if (CAP_BOOL.has(k)) continue;
       let v = got[k]; if (v == null || v === "") continue;
       v = String(v).trim().slice(0, 300);
       if (k === "Purpose") {
@@ -567,7 +661,7 @@ async function capAutoRead(set, form) {
         form.querySelectorAll('[name="PurposeCode"]').forEach(c => { if (codes.includes(String(c.value).toUpperCase())) c.checked = true; }); n++; continue;
       }
       const el = form.elements[k === "LicenceNo" ? "OwnerNo" : k]; if (!el || String(el.value).trim()) continue;   // never overwrites what the operator typed
-      if (k === "LicenceNo") v = cleanNo(v);
+      if (k === "LicenceNo" || k === "CarrierNo") v = cleanNo(v);
       if (el.tagName === "SELECT" && ![...el.options].some(o => o.value === v)) continue;
       el.value = v; el.classList.add("auto"); n++;
     }

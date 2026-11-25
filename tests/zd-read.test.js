@@ -15,7 +15,8 @@ const { capReadRequest, CAP_FIELDS } = ctx;
 const NOD_FORM = ["SerialNo", "PrevOwner", "PrevLicenceNo", "NODDate"];
 const BUY_FORM = ["OwnerNo", "HolderKind", "Surname", "GivenNames", "MiddleName", "CompanyName", "Address", "SerialNo", "Make", "Model",
   "FirearmType", "Calibre", "Capacity", "PurposeCode", "ExpiryDate", "IssueDate", "PTBNo", "PTBDate", "DeliveredDate", "ReceiptNo",
-  "OfficeOfIssue", "PrevOwner", "PrevLicenceNo"];
+  "OfficeOfIssue", "PrevOwner", "PrevLicenceNo", "HasLTC", "CarrierNo", "CarrierGivenNames", "CarrierMiddleName", "CarrierSurname",
+  "CarrierAddress", "CarrierExpiryDate"];
 
 test("a Notice of Disposal asks only for the NOD form's fields", () => {
   const { schema, instructions } = capReadRequest("NOD", ["20261119-002_NOD_Guo_Shujie.pdf"], n => NOD_FORM.includes(n));
@@ -34,7 +35,7 @@ test("schema is valid for forced tool use: object, nullable strings, required ke
   const { schema } = capReadRequest("PTB", [], () => true);
   assert.equal(schema.type, "object");
   assert.equal(Object.keys(schema.properties).length, CAP_FIELDS.length + 2);
-  for (const k of CAP_FIELDS) assert.deepEqual([...schema.properties[k].type], ["string", "null"]);
+  for (const k of CAP_FIELDS) assert.deepEqual([...schema.properties[k].type], k === "HasLTC" ? ["boolean", "null"] : ["string", "null"]);
   for (const k of schema.required) assert.ok(schema.properties[k], "required key " + k + " is a property");
   assert.ok(JSON.stringify(schema).length < 8000);
 });
@@ -42,4 +43,18 @@ test("schema is valid for forced tool use: object, nullable strings, required ke
 test("instructions stay under the stack's 8000-character limit even with long file names", () => {
   const { instructions } = capReadRequest("PTB", Array(200).fill("x".repeat(50) + ".pdf"), () => true);
   assert.ok(instructions.length < 8000);
+});
+
+test("a purchase asks for the licence to carry card separately from the owner's card", () => {
+  const { schema, instructions } = capReadRequest("PTB", ["a.pdf"], n => BUY_FORM.includes(n));
+  for (const k of ["HasLTC", "CarrierNo", "CarrierGivenNames", "CarrierSurname", "CarrierExpiryDate"]) assert.ok(schema.properties[k], k);
+  assert.match(schema.properties.LicenceNo.description, /Never the number on an LC card/);
+  assert.match(instructions, /LC prefix/);
+  assert.match(instructions, /C prefix/);
+});
+
+test("a Notice of Disposal doesn't get the card instructions or carrier fields", () => {
+  const { schema, instructions } = capReadRequest("NOD", [], n => NOD_FORM.includes(n));
+  assert.ok(!schema.properties.CarrierNo && !schema.properties.HasLTC);
+  assert.doesNotMatch(instructions, /LICENCE TO CARRY/);
 });
