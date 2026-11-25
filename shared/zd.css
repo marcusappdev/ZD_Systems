@@ -286,3 +286,16 @@ details.purchase[open]>summary{margin-bottom:10px}
 .cap-actions .btn{font-size:15px;padding:10px 18px}
 .cap-alldone{background:var(--ok-bg);color:var(--ok);border-radius:8px;padding:10px 14px;font-weight:600;width:100%;text-align:center}
 @media (max-width:1100px){.cap-grid{grid-template-columns:1fr;height:auto}.cap-page{max-height:70vh}.cap-body{overflow:visible}}
+
+/* Licence Holders and Licensed Firearms lists: each record its own white strip,
+   with a 5px gap in the page background colour between them */
+.card.rowlist{background:transparent;border:0;box-shadow:none;padding:0;overflow:auto}
+table.rows{border-collapse:separate;border-spacing:0 5px;margin-top:-5px}
+table.rows td{background:var(--surface);border-top:1px solid #cfd5dd;border-bottom:1px solid #cfd5dd}
+table.rows td:first-child{border-left:1px solid #cfd5dd;border-radius:var(--r) 0 0 var(--r)}
+table.rows td:last-child{border-right:1px solid #cfd5dd;border-radius:0 var(--r) var(--r) 0}
+table.rows th:first-child{border-radius:var(--r) 0 0 var(--r)}
+table.rows th:last-child{border-radius:0 var(--r) var(--r) 0}
+table.rows tbody tr:nth-child(even) td{background:var(--surface)}
+table.rows tbody tr.go:hover td{background:var(--surface2)}
+.card.rowlist>.empty{background:var(--surface);border:1px solid #cfd5dd;border-radius:var(--r)}
